@@ -23,6 +23,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
@@ -37,6 +38,7 @@ import (
 
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	"github.com/jaehanbyun/redis-operator/internal/controller"
+	"github.com/jaehanbyun/redis-operator/util"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -150,6 +152,13 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
+
+	go func() {
+		if err := util.StartHTTPServer(mgr.GetClient()); err != nil {
+			setupLog.Error(err, "unable to start HTTP server")
+			os.Exit(1)
+		}
+	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
