@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
-	"github.com/jaehanbyun/redis-operator/utils"
+	"github.com/jaehanbyun/redis-operator/k8sutils"
 )
 
 // RedisClusterReconciler reconciles a RedisCluster object
@@ -85,22 +85,22 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Update cluster status
-	if err := utils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+	if err := k8sutils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Handle cluster initialization
-	if err := utils.HandleClusterInitialization(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+	if err := k8sutils.HandleClusterInitialization(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Handle master scaling
-	if err := utils.HandleMasterScaling(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+	if err := k8sutils.HandleMasterScaling(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Handle replica scaling
-	if err := utils.HandleReplicaScaling(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+	if err := k8sutils.HandleReplicaScaling(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 		return ctrl.Result{}, err
 	}
 
