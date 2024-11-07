@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/go-logr/logr"
@@ -125,6 +126,9 @@ func (r *RedisClusterReconciler) reconcileDelete(ctx context.Context, logger log
 func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1beta1.RedisCluster{}).
-		Owns(&corev1.Pod{}). // Watch for changes in Pods Owned by RedisCluster
+		Owns(&corev1.Pod{}).
+		WithOptions(controller.Options{ // Number of concurrent Reconcils desired
+			MaxConcurrentReconciles: 5,
+		}).
 		Complete(r)
 }
