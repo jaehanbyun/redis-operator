@@ -8,9 +8,14 @@ import (
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+const (
+	FailureThreshold = 5
 )
 
 type ClusterNodeInfo struct {
@@ -130,18 +135,21 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 
 	redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
 	redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	if redisCluster.Status.FailedNodes == nil {
+		redisCluster.Status.FailedNodes = make(map[string]redisv1beta1.RedisFailedNodeStatus)
+	}
 
 	podList, err := k8scl.CoreV1().Pods(redisCluster.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name),
-	})
+		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name)})
 	if err != nil {
 		logger.Error(err, "Failed to get cluster pod list")
 		return err
 	}
 
-	existingPods := make(map[string]bool)
-	for _, pod := range podList.Items {
-		existingPods[pod.Name] = true
+	existingPods := make(map[string]*corev1.Pod)
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		existingPods[pod.Name] = pod
 	}
 
 	if len(nodesInfo) == 0 {
@@ -150,7 +158,15 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 		for _, node := range nodesInfo {
 			flagsList := strings.Split(node.Flags, ",")
 
-			if !existingPods[node.PodName] {
+			pod := existingPods[node.PodName]
+
+			if pod.Status.Phase != corev1.PodRunning || !isContainerReady(pod, "redis") {
+				incrementFailureCount(redisCluster, node.NodeID, node.PodName, 2)
+				continue
+			}
+
+			if containsFlag(flagsList, "fail") || containsFlag(flagsList, "disconnected") {
+				incrementFailureCount(redisCluster, node.NodeID, node.PodName, 1)
 				continue
 			}
 
@@ -166,6 +182,28 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 					MasterNodeID: node.MasterNodeID,
 				}
 			}
+
+			resetFailureCount(redisCluster, node.NodeID)
+		}
+	}
+
+	logger.Info("Current MasterMap", "MasterMap", redisCluster.Status.MasterMap)
+	logger.Info("Current ReplicaMap", "ReplicaMap", redisCluster.Status.ReplicaMap)
+	logger.Info("Current FailedNodes", "FailedNodes", redisCluster.Status.FailedNodes)
+
+	failedNodes := make(map[string]redisv1beta1.RedisFailedNodeStatus, 0)
+	for _, node := range redisCluster.Status.FailedNodes {
+		if node.FailureCount >= FailureThreshold {
+			logger.Info("Handling permanently failed node", "NodeID", node.NodeID)
+			failedNodes[node.NodeID] = node
+		}
+	}
+
+	if len(failedNodes) > FailureThreshold {
+		err = handleFailedNode(ctx, cl, k8scl, redisCluster, logger, failedNodes)
+		if err != nil {
+			logger.Error(err, "Failed to handle failed node")
+			return err
 		}
 	}
 
