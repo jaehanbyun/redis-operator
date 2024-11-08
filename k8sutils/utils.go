@@ -28,6 +28,9 @@ func GenerateRedisProbe(port int32) *corev1.Probe {
 				},
 			},
 		},
+		InitialDelaySeconds: 15,
+		PeriodSeconds:       10,
+		FailureThreshold:    3,
 	}
 }
 
