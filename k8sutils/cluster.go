@@ -34,7 +34,7 @@ func GetClusterNodesInfo(k8scl kubernetes.Interface, redisCluster *redisv1beta1.
 	}
 
 	port := ExtractPortFromPodName(firstMasterPodName)
-	cmd := []string{"redis-cli", "-h", "localhost", "-p", fmt.Sprintf("%d", port), "cluster", "nodes"}
+	cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", port), "cluster", "nodes"}
 	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, firstMasterPodName, cmd)
 	if err != nil {
 		logger.Error(err, "Error executing Redis CLI command", "Command", strings.Join(cmd, " "))
