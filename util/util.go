@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/go-logr/logr"
 	"github.com/gorilla/mux"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	"github.com/jaehanbyun/redis-operator/k8sutils"
@@ -13,13 +14,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func StartHTTPServer(cl client.Client) error {
+func StartHTTPServer(ctx context.Context, cl client.Client, logger logr.Logger) error {
 	r := mux.NewRouter()
 	r.HandleFunc("/cluster/nodes", func(w http.ResponseWriter, r *http.Request) {
 		handleClusterNodesRequest(w, r, cl)
 	}).Methods("GET")
 
-	return http.ListenAndServe(":9090", r)
+	server := &http.Server{
+		Addr:    ":9090",
+		Handler: r,
+	}
+
+	go func() {
+		logger.Info("Starting HTTP server on :9090")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error(err, "HTTP server failed")
+		}
+	}()
+
+	<-ctx.Done()
+	if err := server.Shutdown(context.Background()); err != nil {
+		logger.Error(err, "HTTP server shutdown failed")
+		return err
+	}
+
+	return nil
 }
 
 func handleClusterNodesRequest(w http.ResponseWriter, r *http.Request, cl client.Client) {
