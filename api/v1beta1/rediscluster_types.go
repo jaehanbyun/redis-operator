@@ -37,14 +37,20 @@ type RedisClusterSpec struct {
 
 // RedisClusterStatus defines the observed state of RedisCluster
 type RedisClusterStatus struct {
-	MasterMap  map[string]RedisNodeStatus `json:"masterMap,omitempty"`  // Key: NodeID
-	ReplicaMap map[string]RedisNodeStatus `json:"replicaMap,omitempty"` // Key: NodeID
+	MasterMap   map[string]RedisNodeStatus       `json:"masterMap,omitempty"`   // Key: NodeID
+	ReplicaMap  map[string]RedisNodeStatus       `json:"replicaMap,omitempty"`  // Key: NodeID
+	FailedNodes map[string]RedisFailedNodeStatus `json:"failedNodes,omitempty"` // Key: NodeID
 }
 
 type RedisNodeStatus struct {
 	PodName      string `json:"podName"`
 	NodeID       string `json:"nodeID"`
 	MasterNodeID string `json:"masterNodeID,omitempty"`
+}
+
+type RedisFailedNodeStatus struct {
+	RedisNodeStatus `json:",inline"`
+	FailureCount    int `json:"failureCount,omitempty"`
 }
 
 // +kubebuilder:object:root=true

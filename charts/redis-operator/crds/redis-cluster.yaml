@@ -184,6 +184,22 @@ spec:
             status:
               description: RedisClusterStatus defines the observed state of RedisCluster
               properties:
+                failedNodes:
+                  additionalProperties:
+                    properties:
+                      failureCount:
+                        type: integer
+                      masterNodeID:
+                        type: string
+                      nodeID:
+                        type: string
+                      podName:
+                        type: string
+                    required:
+                      - nodeID
+                      - podName
+                    type: object
+                  type: object
                 masterMap:
                   additionalProperties:
                     properties:
@@ -198,12 +214,6 @@ spec:
                       - podName
                     type: object
                   type: object
-                readyMasters:
-                  format: int32
-                  type: integer
-                readyReplicas:
-                  format: int32
-                  type: integer
                 replicaMap:
                   additionalProperties:
                     properties:

@@ -404,3 +404,35 @@ func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.Redi
 		time.Sleep(2 * time.Second)
 	}
 }
+
+// resetFailureCount resets the failure count
+func resetFailureCount(redisCluster *redisv1beta1.RedisCluster, nodeID string) {
+	delete(redisCluster.Status.FailedNodes, nodeID)
+}
+
+// isContainerReady checks if the container is ready
+func isContainerReady(pod *corev1.Pod, containerName string) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == containerName && cs.Ready {
+			return true
+		}
+	}
+	return false
+}
+
+// incrementFailureCount increments the failure count
+func incrementFailureCount(redisCluster *redisv1beta1.RedisCluster, nodeID, podName string, increment int) {
+	failedNode, exists := redisCluster.Status.FailedNodes[nodeID]
+	if !exists {
+		failedNode = redisv1beta1.RedisFailedNodeStatus{
+			RedisNodeStatus: redisv1beta1.RedisNodeStatus{
+				PodName: podName,
+				NodeID:  nodeID,
+			},
+			FailureCount: increment,
+		}
+	} else {
+		failedNode.FailureCount += increment
+	}
+	redisCluster.Status.FailedNodes[nodeID] = failedNode
+}

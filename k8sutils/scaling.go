@@ -9,6 +9,8 @@ import (
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	"github.com/redis/go-redis/v9"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -402,7 +404,7 @@ func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.R
 	}
 
 	masterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, newMaster.PodName)
-	if err := RebalanceCluster(k8scl, redisCluster, logger, masterAddress); err != nil {
+	if err := RebalanceCluster(k8scl, redisCluster, logger, masterAddress, true); err != nil {
 		logger.Error(err, "Error during cluster rebalancing")
 		return err
 	}
@@ -440,14 +442,17 @@ func RemoveNodeFromCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta
 }
 
 // RebalanceCluster rebalances the cluster
-func RebalanceCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, masterAddress string) error {
+func RebalanceCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, masterAddress string, emptyMasterOpt bool) error {
 	var existingMaster redisv1beta1.RedisNodeStatus
 	for _, m := range redisCluster.Status.MasterMap {
 		existingMaster = m
 		break
 	}
 
-	rebalanceCmd := []string{"redis-cli", "--cluster", "rebalance", masterAddress, "--cluster-use-empty-masters", "--cluster-yes"}
+	rebalanceCmd := []string{"redis-cli", "--cluster", "rebalance", masterAddress, "--cluster-yes"}
+	if emptyMasterOpt {
+		rebalanceCmd = append(rebalanceCmd, "--cluster-use-empty-masters")
+	}
 	logger.Info("Rebalance command", "Command", rebalanceCmd)
 
 	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, rebalanceCmd)
@@ -456,5 +461,52 @@ func RebalanceCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.Red
 		return err
 	}
 	logger.Info("Cluster rebalancing completed successfully")
+	return nil
+}
+
+// handleFailedNode handels the failed node
+func handleFailedNode(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, failedNodes map[string]redisv1beta1.RedisFailedNodeStatus) error {
+	var existingMaster redisv1beta1.RedisNodeStatus
+	for _, master := range redisCluster.Status.MasterMap {
+		existingMaster = master
+		break
+	}
+
+	existingMasterPort := ExtractPortFromPodName(existingMaster.PodName)
+
+	for _, node := range failedNodes {
+		delNodeCmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", existingMasterPort), "cluster", "forget", node.NodeID}
+		output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, delNodeCmd)
+		logger.Info("Output of redis-cli cluster forget command", "Output", output)
+		if err != nil {
+			logger.Error(err, "Error forgetting failed node", "Output", output)
+			return err
+		}
+
+		err = cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: node.PodName}, &corev1.Pod{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				podName, err := GetPodNameByNodeID(k8scl, redisCluster.Namespace, node.NodeID, logger)
+				if err != nil {
+					logger.Error(err, "Failed to get Pod name by NodeID", "NodeID", node.NodeID)
+					continue
+				}
+				err = DeleteRedisPod(ctx, cl, k8scl, redisCluster, logger, podName)
+				if err != nil {
+					logger.Error(err, "Error deleting failed node Pod", "PodName", podName)
+					return fmt.Errorf("failed to delete pod %s: %v", podName, err)
+				}
+				logger.Info("Successfully deleted failed node Pod", "PodName", podName)
+			}
+		}
+	}
+
+	existingMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, existingMaster.PodName)
+
+	if err := RebalanceCluster(k8scl, redisCluster, logger, existingMasterAddress, false); err != nil {
+		logger.Error(err, "Error during cluster rebalancing")
+		return err
+	}
+
 	return nil
 }
