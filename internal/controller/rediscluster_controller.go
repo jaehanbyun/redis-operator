@@ -86,7 +86,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Update cluster status
 	if err := k8sutils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
 	}
 
 	// Handle cluster initialization
@@ -104,10 +104,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{
-		Requeue:      true,
-		RequeueAfter: time.Second * 10,
-	}, nil
+	return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
 }
 
 func (r *RedisClusterReconciler) reconcileDelete(ctx context.Context, logger logr.Logger, redisCluster *redisv1beta1.RedisCluster) (ctrl.Result, error) {
