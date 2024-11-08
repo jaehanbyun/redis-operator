@@ -28,6 +28,9 @@ func GenerateRedisProbe(port int32) *corev1.Probe {
 				},
 			},
 		},
+		InitialDelaySeconds: 15,
+		PeriodSeconds:       10,
+		FailureThreshold:    3,
 	}
 }
 
@@ -286,6 +289,8 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 			},
 		}
 	}
+
+	pod.Spec.RestartPolicy = corev1.RestartPolicyAlways
 
 	return pod
 }
