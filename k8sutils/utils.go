@@ -433,3 +433,29 @@ func incrementFailureCount(redisCluster *redisv1beta1.RedisCluster, nodeID, podN
 	redisCluster.Status.FailedNodes[nodeID] = failedNode
 }
 
+// IsPodRunning checks if the specified Pod is running and the container is ready
+func IsPodRunning(ctx context.Context, k8scl kubernetes.Interface, namespace, podName, containerName string, logger logr.Logger) (bool, error) {
+	pod, err := k8scl.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Pod not found", "PodName", podName)
+			return false, nil
+		}
+		logger.Error(err, "Failed to get Pod", "PodName", podName)
+		return false, err
+	}
+
+	if pod.Status.Phase != corev1.PodRunning {
+		logger.Info("Pod is not running", "PodName", podName, "Phase", pod.Status.Phase)
+		return false, nil
+	}
+
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == containerName && cs.Ready {
+			return true, nil
+		}
+	}
+
+	logger.Info("Container is not ready", "PodName", podName, "ContainerName", containerName)
+	return false, nil
+}

@@ -469,7 +469,28 @@ func RebalanceCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.Red
 	return nil
 }
 
+// FixCluster fixes the cluster
+func FixCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
+	var existingMaster redisv1beta1.RedisNodeStatus
+	for _, master := range redisCluster.Status.MasterMap {
+		existingMaster = master
+		break
+	}
 
+	existingMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, existingMaster.PodName)
+
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("echo yes | redis-cli --cluster fix %s", existingMasterAddress),
+	}
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, cmd)
+	if err != nil {
+		logger.Error(err, "Failed to execute fix cmd", "Output", output)
+		return fmt.Errorf("failed to excute fix cmd %s", output)
+	}
+
+	return nil
+}
 
 // handleFailedNode handels the failed node
 func handleFailedNode(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, failedNodes map[string]redisv1beta1.RedisFailedNodeStatus) error {
@@ -506,8 +527,13 @@ func handleFailedNode(ctx context.Context, cl client.Client, k8scl kubernetes.In
 				logger.Info("Successfully deleted failed node Pod", "PodName", podName)
 			}
 		}
+		resetFailureCount(redisCluster, node.NodeID)
 	}
 
+	if err := FixCluster(k8scl, redisCluster, logger); err != nil {
+		logger.Error(err, "Error during cluster fixing", "output", err)
+		return err
+	}
 
 	return nil
 }
