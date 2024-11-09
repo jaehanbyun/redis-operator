@@ -10,6 +10,7 @@ import (
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -26,21 +27,21 @@ type ClusterNodeInfo struct {
 }
 
 // GetClusterNodesInfo returns information about all nodes in a Cluster by executing "cluster nodes" command via redis-cli
-func GetClusterNodesInfo(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) ([]ClusterNodeInfo, error) {
-	var firstMasterPodName string
+func GetClusterNodesInfo(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) ([]ClusterNodeInfo, error) {
+	var masterPodName string
 	for _, master := range redisCluster.Status.MasterMap {
-		firstMasterPodName = master.PodName
-		break
-	}
+		masterPodName = master.PodName
+			break
+		}
 
-	if firstMasterPodName == "" {
+	if masterPodName == "" {
 		logger.Info("No master nodes in the cluster")
 		return []ClusterNodeInfo{}, nil
 	}
 
-	port := ExtractPortFromPodName(firstMasterPodName)
+	port := ExtractPortFromPodName(masterPodName)
 	cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", port), "cluster", "nodes"}
-	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, firstMasterPodName, cmd)
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, masterPodName, cmd)
 	if err != nil {
 		logger.Error(err, "Error executing Redis CLI command", "Command", strings.Join(cmd, " "))
 		return nil, err
@@ -89,13 +90,13 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 
 	for i := int32(0); i < desiredMastersCount-currentMasterCount; i++ {
 		port := redisCluster.Spec.BasePort + currentMasterCount + i
-		err := CreateMasterPod(ctx, cl, k8scl, redisCluster, logger, port)
+		err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port)
 		if err != nil {
 			return err
 		}
 
 		podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
-		if err := WaitForPodReady(ctx, cl, redisCluster, logger, podName); err != nil {
+		if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, podName); err != nil {
 			logger.Error(err, "Error waiting for master Pod to be ready", "Pod", podName)
 			return err
 		}
@@ -106,7 +107,7 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 			return err
 		}
 
-		if err := UpdatePodLabelWithRedisID(ctx, cl, redisCluster, logger, podName, redisNodeID); err != nil {
+		if err := UpdatePodLabelWithRedisID(ctx, k8scl, redisCluster, logger, podName, redisNodeID); err != nil {
 			logger.Error(err, "Failed to update Pod label", "Pod", podName)
 			return err
 		}
@@ -127,7 +128,12 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 
 // UpdateClusterStatus updates the RedisCluster's MasterMap and ReplicaMap by querying the current Redis cluster nodes
 func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
-	nodesInfo, err := GetClusterNodesInfo(k8scl, redisCluster, logger)
+	if err := cl.Get(ctx, types.NamespacedName{Name: redisCluster.Name, Namespace: redisCluster.Namespace}, redisCluster); err != nil {
+		logger.Error(err, "Failed to get latest RedisCluster state")
+		return err
+	}
+
+	nodesInfo, err := GetClusterNodesInfo(ctx, k8scl, redisCluster, logger)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster node information")
 		return err
@@ -292,7 +298,7 @@ func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kuberne
 			return err
 		}
 
-		err = DeleteRedisPod(ctx, cl, k8scl, redisCluster, logger, replica.PodName)
+		err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, replica.PodName)
 		if err != nil {
 			logger.Error(err, "Error deleting replica Pod", "PodName", replica.PodName)
 			return err
