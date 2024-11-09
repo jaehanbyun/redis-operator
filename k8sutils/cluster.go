@@ -25,10 +25,16 @@ type ClusterNodeInfo struct {
 func GetClusterNodesInfo(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) ([]ClusterNodeInfo, error) {
 	var masterPodName string
 	for _, master := range redisCluster.Status.MasterMap {
-		masterPodName = master.PodName
+		isRunning, err := IsPodRunning(ctx, k8scl, redisCluster.Namespace, master.PodName, "redis", logger)
+		if err != nil {
+			logger.Error(err, "Error checking if Pod is running", "PodName", master.PodName)
+			continue
+		}
+		if isRunning {
+			masterPodName = master.PodName
 			break
 		}
-
+	}
 	if masterPodName == "" {
 		logger.Info("No master nodes in the cluster")
 		return []ClusterNodeInfo{}, nil
@@ -129,8 +135,12 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 		return err
 	}
 
-	redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
-	redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	if redisCluster.Status.MasterMap == nil {
+		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	}
+	if redisCluster.Status.ReplicaMap == nil {
+		redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	}
 	if redisCluster.Status.FailedNodes == nil {
 		redisCluster.Status.FailedNodes = make(map[string]redisv1beta1.RedisFailedNodeStatus)
 	}
@@ -148,6 +158,9 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 		existingPods[pod.Name] = pod
 	}
 
+	currentMasters := make(map[string]redisv1beta1.RedisNodeStatus)
+	currentReplicas := make(map[string]redisv1beta1.RedisNodeStatus)
+
 	if len(nodesInfo) == 0 {
 		logger.Info("No cluster node information found. Assuming initial state")
 	} else {
@@ -163,31 +176,36 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 
 			if containsFlag(flagsList, "fail") || containsFlag(flagsList, "disconnected") {
 				incrementFailureCount(redisCluster, node.NodeID, node.PodName, 1)
-				continue
+			} else {
+				resetFailureCount(redisCluster, node.NodeID)
 			}
 
-			if containsFlag(flagsList, "master") {
-				redisCluster.Status.MasterMap[node.NodeID] = redisv1beta1.RedisNodeStatus{
-					PodName: node.PodName,
-					NodeID:  node.NodeID,
-				}
-			} else if containsFlag(flagsList, "slave") {
-				redisCluster.Status.ReplicaMap[node.NodeID] = redisv1beta1.RedisNodeStatus{
-					PodName:      node.PodName,
-					NodeID:       node.NodeID,
-					MasterNodeID: node.MasterNodeID,
+			failureCount := redisCluster.Status.FailedNodes[node.NodeID].FailureCount
+			if failureCount < 5 {
+				if containsFlag(flagsList, "master") {
+					currentMasters[node.NodeID] = redisv1beta1.RedisNodeStatus{
+						PodName: node.PodName,
+						NodeID:  node.NodeID,
+					}
+				} else if containsFlag(flagsList, "slave") {
+					currentReplicas[node.NodeID] = redisv1beta1.RedisNodeStatus{
+						PodName:      node.PodName,
+						NodeID:       node.NodeID,
+						MasterNodeID: node.MasterNodeID,
+					}
 				}
 			}
-
-			resetFailureCount(redisCluster, node.NodeID)
 		}
 	}
+
+	redisCluster.Status.MasterMap = currentMasters
+	redisCluster.Status.ReplicaMap = currentReplicas
 
 	logger.Info("Current MasterMap", "MasterMap", redisCluster.Status.MasterMap)
 	logger.Info("Current ReplicaMap", "ReplicaMap", redisCluster.Status.ReplicaMap)
 	logger.Info("Current FailedNodes", "FailedNodes", redisCluster.Status.FailedNodes)
 
-	failedNodes := make(map[string]redisv1beta1.RedisFailedNodeStatus, 0)
+	failedNodes := make(map[string]redisv1beta1.RedisFailedNodeStatus)
 	for _, node := range redisCluster.Status.FailedNodes {
 		if node.FailureCount >= 3 {
 			logger.Info("Handling permanently failed node", "NodeID", node.NodeID)
