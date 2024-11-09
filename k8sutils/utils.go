@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // GenerateRedisProbe returns Liveness and Readiness probes
@@ -67,14 +66,15 @@ func ExtractPortFromPodName(podName string) int32 {
 }
 
 // CreateMasterPod creates a Redis master Pod with the given port
-func CreateMasterPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32) error {
+func CreateMasterPod(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32) error {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 	masterPod := GenerateRedisPodDef(redisCluster, port, "")
-	if err := cl.Create(ctx, masterPod); err != nil && !errors.IsAlreadyExists(err) {
+	_, err := k8scl.CoreV1().Pods(redisCluster.Namespace).Create(ctx, masterPod, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
 
-	if err := WaitForPodReady(ctx, cl, redisCluster, logger, podName); err != nil {
+	if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, podName); err != nil {
 		logger.Error(err, "Error waiting for master Pod to be ready", "Pod", podName)
 		return err
 	}
@@ -85,7 +85,7 @@ func CreateMasterPod(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 		return err
 	}
 
-	if err := UpdatePodLabelWithRedisID(ctx, cl, redisCluster, logger, podName, redisNodeID); err != nil {
+	if err := UpdatePodLabelWithRedisID(ctx, k8scl, redisCluster, logger, podName, redisNodeID); err != nil {
 		logger.Error(err, "Failed to update Pod label", "Pod", podName)
 		return err
 	}
@@ -94,15 +94,15 @@ func CreateMasterPod(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 }
 
 // CreateReplicaPod creates a Redis replica Pod attached to the specified master node
-func CreateReplicaPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32, masterNodeID string) error {
+func CreateReplicaPod(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32, masterNodeID string) error {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 	replicaPod := GenerateRedisPodDef(redisCluster, port, masterNodeID)
-	err := cl.Create(ctx, replicaPod)
+	_, err := k8scl.CoreV1().Pods(redisCluster.Namespace).Create(ctx, replicaPod, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
 
-	if err := WaitForPodReady(ctx, cl, redisCluster, logger, podName); err != nil {
+	if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, podName); err != nil {
 		logger.Error(err, "Error waiting for replica Pod to be ready", "Pod", podName)
 		return err
 	}
@@ -113,7 +113,7 @@ func CreateReplicaPod(ctx context.Context, cl client.Client, k8scl kubernetes.In
 		return err
 	}
 
-	if err := UpdatePodLabelWithRedisID(ctx, cl, redisCluster, logger, podName, redisNodeID); err != nil {
+	if err := UpdatePodLabelWithRedisID(ctx, k8scl, redisCluster, logger, podName, redisNodeID); err != nil {
 		logger.Error(err, "Failed to update Pod label", "Pod", podName)
 		return err
 	}
@@ -122,49 +122,49 @@ func CreateReplicaPod(ctx context.Context, cl client.Client, k8scl kubernetes.In
 }
 
 // WaitForPodReady waits until the specified Pod is in the Running state and its containers are ready
-func WaitForPodReady(ctx context.Context, cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
-	pod := &corev1.Pod{}
+func WaitForPodReady(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	for {
-		err := cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: podName}, pod)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				logger.Info("Pod not yet created, retrying...", "Pod", podName)
-				time.Sleep(2 * time.Second)
-				continue
+		select {
+		case <-timeoutCtx.Done():
+			return fmt.Errorf("timeout waiting for Pod %s to be ready", podName)
+		default:
+			pod, err := k8scl.CoreV1().Pods(redisCluster.Namespace).Get(ctx, podName, metav1.GetOptions{})
+			if err != nil {
+				if errors.IsNotFound(err) {
+					logger.Info("Pod not yet created, retrying...", "Pod", podName)
+					time.Sleep(2 * time.Second)
+					continue
+				}
+				logger.Error(err, "Failed to get Pod", "Pod", podName)
+				return err
 			}
-			logger.Error(err, "Failed to get Pod", "Pod", podName)
-			return err
-		}
 
-		if pod.Status.Phase == corev1.PodRunning && pod.Status.ContainerStatuses[0].Ready {
-			logger.Info("Pod is ready", "Pod", podName)
-			break
-		}
+			if pod.Status.Phase == corev1.PodRunning && isContainerReady(pod, "redis") {
+				logger.Info("Pod is ready", "Pod", podName)
+				return nil
+			}
 
-		logger.Info("Pod not ready yet, retrying...", "Pod", podName)
-		time.Sleep(5 * time.Second)
+			logger.Info("Pod not ready yet, retrying...", "Pod", podName)
+			time.Sleep(5 * time.Second)
+		}
 	}
-	return nil
 }
 
 // FindAvailablePort finds an available port for a new Redis Pod within a specified range
-func FindAvailablePort(cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) (int32, error) {
+func FindAvailablePort(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) (int32, error) {
 	usedPorts := make(map[int32]bool)
-	existingPods := &corev1.PodList{}
-	opts := []client.ListOption{
-		client.InNamespace(redisCluster.Namespace),
-		client.MatchingLabels{"clusterName": redisCluster.Name},
-	}
-
-	err := cl.List(context.TODO(), existingPods, opts...)
+	podList, err := k8scl.CoreV1().Pods(redisCluster.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name),
+	})
 	if err != nil {
 		return 0, err
 	}
 
-	for _, pod := range existingPods.Items {
-		podIP := ExtractPortFromPodName(pod.Name)
-		logger.Info("Pod info", "PodName", pod.Name, "PodIP", pod.Status.PodIP, "Phase", pod.Status.Phase)
-		usedPorts[podIP] = true
+	for _, pod := range podList.Items {
+		port := ExtractPortFromPodName(pod.Name)
+		usedPorts[port] = true
 	}
 
 	basePort := redisCluster.Spec.BasePort
@@ -180,17 +180,20 @@ func FindAvailablePort(cl client.Client, redisCluster *redisv1beta1.RedisCluster
 }
 
 // UpdatePodLabelWithRedisID updates the Pod's labels to include the Redis node ID
-func UpdatePodLabelWithRedisID(ctx context.Context, cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string, redisNodeID string) error {
-	pod := &corev1.Pod{}
-	err := cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: podName}, pod)
+func UpdatePodLabelWithRedisID(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string, redisNodeID string) error {
+	pod, err := k8scl.CoreV1().Pods(redisCluster.Namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		logger.Error(err, "Failed to get Pod", "Pod", podName)
 		return err
 	}
 
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
 	pod.Labels["redisNodeID"] = redisNodeID
 
-	if err := cl.Update(ctx, pod); err != nil {
+	_, err = k8scl.CoreV1().Pods(redisCluster.Namespace).Update(ctx, pod, metav1.UpdateOptions{})
+	if err != nil {
 		logger.Error(err, "Error updating Pod label", "Pod", podName)
 		return err
 	}
@@ -319,21 +322,14 @@ func containsFlag(flags []string, target string) bool {
 }
 
 // DeleteRedisPod deletes the specified Redis Pod from the cluster
-func DeleteRedisPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
-	pod := &corev1.Pod{}
-	err := cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: podName}, pod)
+func DeleteRedisPod(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
+	err := k8scl.CoreV1().Pods(redisCluster.Namespace).Delete(ctx, podName, metav1.DeleteOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("Replica Pod to delete does not exist", "Pod", podName)
+			logger.Info("Pod to delete does not exist", "Pod", podName)
 			return nil
 		}
-		logger.Error(err, "Failed to get Pod", "Pod", podName)
-		return err
-	}
-
-	err = cl.Delete(ctx, pod)
-	if err != nil {
-		logger.Error(err, "Error deleting Pod", "Pod", podName)
+		logger.Error(err, "Failed to delete Pod", "Pod", podName)
 		return err
 	}
 
@@ -386,7 +382,7 @@ func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.Redi
 			return fmt.Errorf("node %s did not transition to role %s", nodeID, expectedRole)
 		}
 
-		nodesInfo, err := GetClusterNodesInfo(k8scl, redisCluster, logger)
+		nodesInfo, err := GetClusterNodesInfo(context.TODO(), k8scl, redisCluster, logger)
 		if err != nil {
 			logger.Error(err, "Failed to get cluster node information")
 			return err
@@ -436,3 +432,4 @@ func incrementFailureCount(redisCluster *redisv1beta1.RedisCluster, nodeID, podN
 	}
 	redisCluster.Status.FailedNodes[nodeID] = failedNode
 }
+
