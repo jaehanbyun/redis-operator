@@ -7,6 +7,9 @@ redisOperator:
 
 replicaCount: 1
 
+service:
+  type: ClusterIP
+
 podAnnotations: {}
 podLabels: {}
 
