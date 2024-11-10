@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+// getRedisClusterSlots returns the total number of slots assigned to a specific Redis node
 func getRedisClusterSlots(ctx context.Context, redisClient *redis.Client, logger logr.Logger, nodeID string) (int, error) {
 	totalSlots := 0
 
@@ -34,6 +35,7 @@ func getRedisClusterSlots(ctx context.Context, redisClient *redis.Client, logger
 	return totalSlots, nil
 }
 
+// ReShardRedisCluster reshards slots from one master to another in the Redis cluster
 func ReShardRedisCluster(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, master redisv1beta1.RedisNodeStatus) error {
 	masterPodName := master.PodName
 	redisClient := ConfigureRedisClient(k8scl, redisCluster, logger, masterPodName)
@@ -82,6 +84,7 @@ func ReShardRedisCluster(ctx context.Context, k8scl kubernetes.Interface, redisC
 	return nil
 }
 
+// WaitForSlotMigration waits for slot migration to complete
 func WaitForSlotMigration(ctx context.Context, redisClient *redis.Client, logger logr.Logger, nodeID string, timeout time.Duration) error {
 	startTime := time.Now()
 	for {
@@ -106,6 +109,7 @@ func WaitForSlotMigration(ctx context.Context, redisClient *redis.Client, logger
 	}
 }
 
+// AddMasterToCluster adds a new master node to the Redis cluster and rebalances the slots across all masters
 func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, newMaster redisv1beta1.RedisNodeStatus) error {
 	var existingMaster redisv1beta1.RedisNodeStatus
 	for _, master := range redisCluster.Status.MasterMap {
