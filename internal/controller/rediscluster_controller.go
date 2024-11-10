@@ -186,6 +186,12 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				return ctrl.Result{}, err
 			}
 
+			err = utils.RemoveNodeFromCluster(r.K8sClient, redisCluster, clusterLogger, master)
+			if err != nil {
+				clusterLogger.Error(err, "Error removing master from cluster", "MasterNodeID", masterNodeID)
+				return ctrl.Result{}, err
+			}
+
 			err = utils.DeleteRedisPod(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger, master.PodName)
 			if err != nil {
 				clusterLogger.Error(err, "Error deleting master Pod", "PodName", master.PodName)
@@ -194,11 +200,6 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 			delete(redisCluster.Status.MasterMap, masterNodeID)
 			redisCluster.Status.ReadyMasters = int32(len(redisCluster.Status.MasterMap))
-
-			if err := r.Status().Update(ctx, redisCluster); err != nil {
-				clusterLogger.Error(err, "Error updating RedisCluster status")
-				return ctrl.Result{}, err
-			}
 		}
 		if err := utils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 			clusterLogger.Error(err, "Error updating cluster status")
@@ -305,11 +306,6 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 					masterToReplicas[masterID]--
 
-					if err := r.Status().Update(ctx, redisCluster); err != nil {
-						clusterLogger.Error(err, "Error updating RedisCluster status")
-						return ctrl.Result{}, err
-					}
-
 					replicasToRemove--
 					if replicasToRemove == 0 {
 						break
@@ -325,11 +321,6 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			clusterLogger.Error(err, "Error updating cluster status")
 			return ctrl.Result{}, err
 		}
-	}
-
-	if err := r.Status().Update(ctx, redisCluster); err != nil {
-		clusterLogger.Error(err, "Error updating RedisCluster status")
-		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{

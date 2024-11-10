@@ -144,3 +144,32 @@ func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.R
 
 	return nil
 }
+
+// RemoveNodeFromCluster removes a node from the Redis cluster using its NodeID
+func RemoveNodeFromCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, node redisv1beta1.RedisNodeStatus) error {
+	var existingMaster redisv1beta1.RedisNodeStatus
+	for _, m := range redisCluster.Status.MasterMap {
+		if m.NodeID != node.NodeID {
+			existingMaster = m
+			break
+		}
+	}
+
+	if existingMaster.NodeID == "" {
+		return fmt.Errorf("no existing master available to remove node")
+	}
+
+	existingMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, existingMaster.PodName)
+
+	delNodeCmd := []string{"redis-cli", "--cluster", "del-node", existingMasterAddress, node.NodeID}
+
+	logger.Info("Removing node from cluster", "Command", delNodeCmd)
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, delNodeCmd)
+	if err != nil {
+		logger.Error(err, "Error removing node from cluster", "Output", output)
+		return err
+	}
+
+	logger.Info("Node removed from cluster", "NodePod", node.PodName)
+	return nil
+}
