@@ -117,11 +117,6 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 			PodName: podName,
 			NodeID:  redisNodeID,
 		}
-
-		if err := cl.Status().Update(ctx, redisCluster); err != nil {
-			logger.Error(err, "Error updating RedisCluster status")
-			return err
-		}
 	}
 
 	return nil
