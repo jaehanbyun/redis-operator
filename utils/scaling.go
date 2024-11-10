@@ -134,7 +134,6 @@ func ScaleDownMasters(ctx context.Context, cl client.Client, k8scl kubernetes.In
 		}
 
 		delete(redisCluster.Status.MasterMap, masterNodeID)
-		redisCluster.Status.ReadyMasters = int32(len(redisCluster.Status.MasterMap))
 	}
 
 	if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
@@ -256,10 +255,8 @@ func ScaleDownReplicas(ctx context.Context, cl client.Client, k8scl kubernetes.I
 				}
 
 				delete(redisCluster.Status.ReplicaMap, replicaNodeID)
-				redisCluster.Status.ReadyReplicas = int32(len(redisCluster.Status.ReplicaMap))
 
 				masterToReplicas[masterID]--
-
 				replicasToRemove--
 				if replicasToRemove == 0 {
 					break

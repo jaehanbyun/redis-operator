@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -109,7 +110,6 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 			PodName: podName,
 			NodeID:  redisNodeID,
 		}
-		redisCluster.Status.ReadyMasters = int32(len(redisCluster.Status.MasterMap))
 
 		if err := cl.Status().Update(ctx, redisCluster); err != nil {
 			logger.Error(err, "Error updating RedisCluster status")
@@ -150,9 +150,6 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 			}
 		}
 	}
-
-	redisCluster.Status.ReadyMasters = int32(len(redisCluster.Status.MasterMap))
-	redisCluster.Status.ReadyReplicas = int32(len(redisCluster.Status.ReplicaMap))
 
 	if err := cl.Status().Update(ctx, redisCluster); err != nil {
 		logger.Error(err, "Error updating RedisCluster status")
@@ -246,7 +243,6 @@ func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kuberne
 		}
 	}
 
-	redisCluster.Status.ReadyReplicas = int32(len(redisCluster.Status.ReplicaMap))
 	return nil
 }
 
