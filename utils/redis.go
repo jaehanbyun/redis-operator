@@ -17,6 +17,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+// GetRedisServerAddress returns the full address (IP and port) of the Redis server
 func GetRedisServerAddress(k8scl kubernetes.Interface, logger logr.Logger, namespace, podName string) string {
 	ip := GetRedisServerIP(k8scl, logger, namespace, podName)
 	port := ExtractPortFromPodName(podName)
@@ -24,6 +25,7 @@ func GetRedisServerAddress(k8scl kubernetes.Interface, logger logr.Logger, names
 	return fmt.Sprintf("%s:%d", ip, port)
 }
 
+// GetRedisServerIP returns the IP address of the Redis server
 func GetRedisServerIP(k8scl kubernetes.Interface, logger logr.Logger, namespace string, podName string) string {
 	pod, err := k8scl.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
@@ -33,6 +35,7 @@ func GetRedisServerIP(k8scl kubernetes.Interface, logger logr.Logger, namespace 
 	return pod.Status.PodIP
 }
 
+// ConfigureRedisClient sets up and returns a Redis client connected to the specified Redis server
 func ConfigureRedisClient(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) *redis.Client {
 	addr := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, podName)
 	opts := &redis.Options{
@@ -42,6 +45,7 @@ func ConfigureRedisClient(k8scl kubernetes.Interface, redisCluster *redisv1beta1
 	return redis.NewClient(opts)
 }
 
+// CreateClusterCommand generates a Redis cluster creation command with the addresses of given master nodes
 func CreateClusterCommand(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) []string {
 	cmd := []string{"redis-cli", "--cluster", "create"}
 
@@ -56,6 +60,7 @@ func CreateClusterCommand(k8scl kubernetes.Interface, redisCluster *redisv1beta1
 	return cmd
 }
 
+// GetRedisNodeID returns the node ID of a Redis server
 func GetRedisNodeID(ctx context.Context, k8scl kubernetes.Interface, logger logr.Logger, namespace string, podName string) (string, error) {
 	port := ExtractPortFromPodName(podName)
 
@@ -75,6 +80,7 @@ func GetRedisNodeID(ctx context.Context, k8scl kubernetes.Interface, logger logr
 	return nodeID, nil
 }
 
+// RunRedisCLI executes a Redis CLI command on the Redis pod and returns the command output
 func RunRedisCLI(k8scl kubernetes.Interface, namespace string, podName string, cmd []string) (string, error) {
 	config, err := ctrl.GetConfig()
 	if err != nil {
