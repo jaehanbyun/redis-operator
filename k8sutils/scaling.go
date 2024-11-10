@@ -137,7 +137,7 @@ func ScaleDownMasters(ctx context.Context, cl client.Client, k8scl kubernetes.In
 
 		delete(redisCluster.Status.MasterMap, masterNodeID)
 
-		if err := RebalanceCluster(k8scl, redisCluster, logger, master, false); err != nil {
+		if err := RebalanceCluster(k8scl, redisCluster, logger, false); err != nil {
 			logger.Error(err, "Error during cluster rebalancing")
 			return err
 		}
@@ -408,7 +408,7 @@ func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.R
 		return err
 	}
 
-	if err := RebalanceCluster(k8scl, redisCluster, logger, existingMaster, true); err != nil {
+	if err := RebalanceCluster(k8scl, redisCluster, logger, true); err != nil {
 		logger.Error(err, "Error during cluster rebalancing")
 		return err
 	}
@@ -446,15 +446,15 @@ func RemoveNodeFromCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta
 }
 
 // RebalanceCluster rebalances the cluster
-func RebalanceCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, master redisv1beta1.RedisNodeStatus, emptyMasterOpt bool) error {
+func RebalanceCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, emptyMasterOpt bool) error {
 	var existingMaster redisv1beta1.RedisNodeStatus
 	for _, m := range redisCluster.Status.MasterMap {
 		existingMaster = m
 		break
 	}
 
-	masterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, master.PodName)
-	rebalanceCmd := []string{"redis-cli", "--cluster", "rebalance", masterAddress, "--cluster-yes"}
+	existingMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, existingMaster.PodName)
+	rebalanceCmd := []string{"redis-cli", "--cluster", "rebalance", existingMasterAddress, "--cluster-yes"}
 	if emptyMasterOpt {
 		rebalanceCmd = append(rebalanceCmd, "--cluster-use-empty-masters")
 	}
