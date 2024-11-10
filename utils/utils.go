@@ -31,6 +31,7 @@ func GenerateRedisProbe(port int32) *corev1.Probe {
 	}
 }
 
+// GenerateAnnotations returns a list of annotations for prometheus metrics
 func GenerateAnnotations(port int32) map[string]string {
 	return map[string]string{
 		"prometheus.io/port":   fmt.Sprintf("%d", port+5000),
@@ -38,6 +39,7 @@ func GenerateAnnotations(port int32) map[string]string {
 	}
 }
 
+// GenerateLabels returns a set of labels for the given info
 func GenerateLabels(clusterName string, port int32) map[string]string {
 	return map[string]string{
 		"clusterName": clusterName,
@@ -45,12 +47,14 @@ func GenerateLabels(clusterName string, port int32) map[string]string {
 	}
 }
 
+// GenerateRedisClusterAsOwner returns a list of OwnerReferences for the given RedisCluster resource
 func GenerateRedisClusterAsOwner(redisCluster *redisv1beta1.RedisCluster, crName string) []metav1.OwnerReference {
 	return []metav1.OwnerReference{
 		*metav1.NewControllerRef(redisCluster, redisv1beta1.GroupVersion.WithKind("RedisCluster")),
 	}
 }
 
+// ExtractPortFromPodName extracts the port number from a Pod's name
 func ExtractPortFromPodName(podName string) int32 {
 	parts := strings.Split(podName, "-")
 	portStr := parts[len(parts)-1]
@@ -59,6 +63,7 @@ func ExtractPortFromPodName(podName string) int32 {
 	return int32(port)
 }
 
+// CreateMasterPod creates a Redis master Pod with the given port
 func CreateMasterPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32) error {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 	masterPod := GenerateRedisPodDef(redisCluster, port, "")
@@ -85,6 +90,7 @@ func CreateMasterPod(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 	return nil
 }
 
+// CreateReplicaPod creates a Redis replica Pod attached to the specified master node
 func CreateReplicaPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32, masterNodeID string) error {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 	replicaPod := GenerateRedisPodDef(redisCluster, port, masterNodeID)
@@ -112,6 +118,7 @@ func CreateReplicaPod(ctx context.Context, cl client.Client, k8scl kubernetes.In
 	return nil
 }
 
+// WaitForPodReady waits until the specified Pod is in the Running state and its containers are ready
 func WaitForPodReady(ctx context.Context, cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
 	pod := &corev1.Pod{}
 	for {
@@ -137,6 +144,7 @@ func WaitForPodReady(ctx context.Context, cl client.Client, redisCluster *redisv
 	return nil
 }
 
+// FindAvailablePort finds an available port for a new Redis Pod within a specified range
 func FindAvailablePort(cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) (int32, error) {
 	usedPorts := make(map[int32]bool)
 	existingPods := &corev1.PodList{}
@@ -168,6 +176,7 @@ func FindAvailablePort(cl client.Client, redisCluster *redisv1beta1.RedisCluster
 	return 0, fmt.Errorf("no available ports found in the range")
 }
 
+// UpdatePodLabelWithRedisID updates the Pod's labels to include the Redis node ID
 func UpdatePodLabelWithRedisID(ctx context.Context, cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string, redisNodeID string) error {
 	pod := &corev1.Pod{}
 	err := cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: podName}, pod)
@@ -187,6 +196,7 @@ func UpdatePodLabelWithRedisID(ctx context.Context, cl client.Client, redisClust
 	return nil
 }
 
+// GenerateRedisPodDef generates a Pod definition for a Redis instance
 func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, matchMasterNodeID string) *corev1.Pod {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 
@@ -249,6 +259,7 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 	if redisCluster.Spec.Resources != nil {
 		pod.Spec.Containers[0].Resources = *redisCluster.Spec.Resources
 	}
+
 	// Apply RedisExporter resource settings if provided
 	if redisCluster.Spec.ExporterResources != nil {
 		pod.Spec.Containers[1].Resources = *redisCluster.Spec.ExporterResources
@@ -279,21 +290,22 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 	return pod
 }
 
+// GetPodNameByNodeID searches the Pod name associated with a given Redis node ID
 func GetPodNameByNodeID(k8scl kubernetes.Interface, namespace string, nodeID string, logger logr.Logger) (string, error) {
 	podList, err := k8scl.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("redisNodeID=%s", nodeID),
 	})
 	if err != nil {
-		logger.Error(err, "NodeID로 Pod를 조회하는 데 실패했습니다.", "NodeID", nodeID)
+		logger.Error(err, "Failed to search Pod using", "NodeID", nodeID)
 		return "", err
 	}
 	if len(podList.Items) == 0 {
-		logger.Info("해당 NodeID를 가진 Pod를 찾을 수 없습니다.", "NodeID", nodeID)
-		return "", fmt.Errorf("NodeID %s를 가진 Pod를 찾을 수 없습니다", nodeID)
+		return "", fmt.Errorf("cannot find Pod with NodeID %s in %s namespace", nodeID, namespace)
 	}
 	return podList.Items[0].Name, nil
 }
 
+// containsFlag checks if a target flag exists within a list of flags
 func containsFlag(flags []string, target string) bool {
 	for _, flag := range flags {
 		if flag == target {
@@ -303,6 +315,7 @@ func containsFlag(flags []string, target string) bool {
 	return false
 }
 
+// DeleteRedisPod deletes the specified Redis Pod from the cluster
 func DeleteRedisPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
 	pod := &corev1.Pod{}
 	err := cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: podName}, pod)
@@ -325,6 +338,7 @@ func DeleteRedisPod(ctx context.Context, cl client.Client, k8scl kubernetes.Inte
 	return nil
 }
 
+// GetMastersToRemove selects a list of master node IDs to be removed from the cluster
 func GetMastersToRemove(redisCluster *redisv1beta1.RedisCluster, mastersToRemove int32, logger logr.Logger) []string {
 	var mastersToRemoveList []string
 	count := int32(0)
@@ -341,6 +355,26 @@ func GetMastersToRemove(redisCluster *redisv1beta1.RedisCluster, mastersToRemove
 	return mastersToRemoveList
 }
 
+// GetReplicasToRemoveFromMaster selects replica node IDs attached to a specific master node for removal from the cluster
+func GetReplicasToRemoveFromMaster(redisCluster *redisv1beta1.RedisCluster, masterNodeID string, replicasToRemove int32, logger logr.Logger) []string {
+	var replicasToRemoveList []string
+	count := int32(0)
+
+	for nodeID, replica := range redisCluster.Status.ReplicaMap {
+		if replica.MasterNodeID == masterNodeID {
+			replicasToRemoveList = append(replicasToRemoveList, nodeID)
+			count++
+			if count >= replicasToRemove {
+				break
+			}
+		}
+	}
+
+	logger.Info("Replicas selected for removal from master", "MasterNodeID", masterNodeID, "Replicas", replicasToRemoveList)
+	return replicasToRemoveList
+}
+
+// WaitForNodeRole waits until the specified node transitions to the expected role (e.g., "slave" or "master")
 func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, nodeID string, expectedRole string, timeout time.Duration) error {
 	startTime := time.Now()
 	for {
@@ -366,22 +400,4 @@ func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.Redi
 		}
 		time.Sleep(2 * time.Second)
 	}
-}
-
-func GetReplicasToRemoveFromMaster(redisCluster *redisv1beta1.RedisCluster, masterNodeID string, replicasToRemove int32, logger logr.Logger) []string {
-	var replicasToRemoveList []string
-	count := int32(0)
-
-	for nodeID, replica := range redisCluster.Status.ReplicaMap {
-		if replica.MasterNodeID == masterNodeID {
-			replicasToRemoveList = append(replicasToRemoveList, nodeID)
-			count++
-			if count >= replicasToRemove {
-				break
-			}
-		}
-	}
-
-	logger.Info("Replicas selected for removal from master", "MasterNodeID", masterNodeID, "Replicas", replicasToRemoveList)
-	return replicasToRemoveList
 }
