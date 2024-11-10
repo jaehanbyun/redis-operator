@@ -131,11 +131,29 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 	redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
 	redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
 
+	podList, err := k8scl.CoreV1().Pods(redisCluster.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name),
+	})
+	if err != nil {
+		logger.Error(err, "Failed to get cluster pod list")
+		return err
+	}
+
+	existingPods := make(map[string]bool)
+	for _, pod := range podList.Items {
+		existingPods[pod.Name] = true
+	}
+
 	if len(nodesInfo) == 0 {
 		logger.Info("No cluster node information found. Assuming initial state")
 	} else {
 		for _, node := range nodesInfo {
 			flagsList := strings.Split(node.Flags, ",")
+
+			if !existingPods[node.PodName] {
+				continue
+			}
+
 			if containsFlag(flagsList, "master") {
 				redisCluster.Status.MasterMap[node.NodeID] = redisv1beta1.RedisNodeStatus{
 					PodName: node.PodName,
