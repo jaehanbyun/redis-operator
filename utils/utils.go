@@ -340,7 +340,7 @@ func DeleteRedisPod(ctx context.Context, cl client.Client, k8scl kubernetes.Inte
 
 // GetMastersToRemove selects a list of master node IDs to be removed from the cluster
 func GetMastersToRemove(redisCluster *redisv1beta1.RedisCluster, mastersToRemove int32, logger logr.Logger) []string {
-	var mastersToRemoveList []string
+	mastersToRemoveList := make([]string, 0, mastersToRemove)
 	count := int32(0)
 
 	for nodeID := range redisCluster.Status.MasterMap {

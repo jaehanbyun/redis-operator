@@ -42,7 +42,7 @@ func GetClusterNodesInfo(k8scl kubernetes.Interface, redisCluster *redisv1beta1.
 
 	logger.Info("Output of redis-cli cluster nodes command", "Output", output)
 
-	var nodesInfo []ClusterNodeInfo
+	nodesInfo := make([]ClusterNodeInfo, 0)
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if line == "" {
