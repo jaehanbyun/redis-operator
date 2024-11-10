@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -345,5 +346,6 @@ func (r *RedisClusterReconciler) reconcileDelete(ctx context.Context, logger log
 func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1beta1.RedisCluster{}).
+		Owns(&corev1.Pod{}). // Watch for changes in Pods Owned by RedisCluster
 		Complete(r)
 }
