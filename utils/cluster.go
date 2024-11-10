@@ -19,6 +19,7 @@ type ClusterNodeInfo struct {
 	MasterNodeID string
 }
 
+// GetClusterNodesInfo returns information about all nodes in a Cluster by executing "cluster nodes" command via redis-cli
 func GetClusterNodesInfo(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) ([]ClusterNodeInfo, error) {
 	var firstMasterPodName string
 	for _, master := range redisCluster.Status.MasterMap {
@@ -71,6 +72,7 @@ func GetClusterNodesInfo(k8scl kubernetes.Interface, redisCluster *redisv1beta1.
 	return nodesInfo, nil
 }
 
+// SetupRedisCluster sets up the initial cluster with master pods
 func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
 	desiredMastersCount := redisCluster.Spec.Masters
 	currentMasterCount := int32(len(redisCluster.Status.MasterMap))
@@ -118,6 +120,7 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 	return nil
 }
 
+// UpdateClusterStatus updates the RedisCluster's MasterMap and ReplicaMap by querying the current Redis cluster nodes
 func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
 	nodesInfo, err := GetClusterNodesInfo(k8scl, redisCluster, logger)
 	if err != nil {
@@ -159,6 +162,7 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 	return nil
 }
 
+// WaitForClusterStabilization checks if all Redis cluster nodes agree on the configuration
 func WaitForClusterStabilization(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
 	timeout := time.After(30 * time.Second)
 	ticker := time.NewTicker(2 * time.Second)
@@ -184,6 +188,7 @@ func WaitForClusterStabilization(k8scl kubernetes.Interface, redisCluster *redis
 	}
 }
 
+// CheckClusterConfigurationAgreement verifies if all Redis cluster nodes share the same configuration epoch
 func CheckClusterConfigurationAgreement(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) (bool, error) {
 	var configEpoch string
 
@@ -216,6 +221,7 @@ func CheckClusterConfigurationAgreement(k8scl kubernetes.Interface, redisCluster
 	return true, nil
 }
 
+// RemoveNodeFromCluster removes a node from the Redis cluster using its NodeID
 func RemoveNodeFromCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, node redisv1beta1.RedisNodeStatus) error {
 	var existingMaster redisv1beta1.RedisNodeStatus
 	for _, m := range redisCluster.Status.MasterMap {
@@ -244,6 +250,7 @@ func RemoveNodeFromCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta
 	return nil
 }
 
+// RemoveReplicasOfMaster removes all replicas associated with the specified master from the Redis cluster
 func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, masterNodeID string) error {
 	var replicasToRemove []redisv1beta1.RedisNodeStatus
 
@@ -272,6 +279,7 @@ func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kuberne
 	return nil
 }
 
+// AddReplicaToMaster adds a replica node to the specified master node in the cluster
 func AddReplicaToMaster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, replica redisv1beta1.RedisNodeStatus) error {
 	master, exists := redisCluster.Status.MasterMap[replica.MasterNodeID]
 	if !exists {
