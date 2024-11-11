@@ -214,6 +214,9 @@ spec:
                       - podName
                     type: object
                   type: object
+                nextAvailablePort:
+                  format: int32
+                  type: integer
                 replicaMap:
                   additionalProperties:
                     properties:
