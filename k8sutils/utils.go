@@ -90,6 +90,11 @@ func CreateMasterPod(ctx context.Context, k8scl kubernetes.Interface, redisClust
 		return err
 	}
 
+	redisCluster.Status.MasterMap[redisNodeID] = redisv1beta1.RedisNodeStatus{
+		PodName: podName,
+		NodeID:  redisNodeID,
+	}
+
 	return nil
 }
 
