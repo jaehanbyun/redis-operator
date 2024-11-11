@@ -87,23 +87,24 @@ func GetClusterNodesInfo(ctx context.Context, k8scl kubernetes.Interface, redisC
 }
 
 // SetupRedisCluster sets up the initial cluster with master pods
-func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
-	desiredMastersCount := redisCluster.Spec.Masters
-	currentMasterCount := int32(len(redisCluster.Status.MasterMap))
-
+func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, newMasterCount int32) error {
 	if redisCluster.Status.MasterMap == nil {
 		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
 	}
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	errorCh := make(chan error, desiredMastersCount-currentMasterCount)
+	errorCh := make(chan error, newMasterCount)
 
-	for i := int32(0); i < desiredMastersCount-currentMasterCount; i++ {
+	ports := make([]int32, newMasterCount)
+	for i := int32(0); i < newMasterCount; i++ {
+		ports[i] = GetNextAvailablePort(redisCluster)
+	}
+
+	for i := int32(0); i < newMasterCount; i++ {
 		wg.Add(1)
-		go func(offset int32) {
+		go func(port int32) {
 			defer wg.Done()
-			port := redisCluster.Spec.BasePort + currentMasterCount + offset
+
 			err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port)
 			if err != nil {
 				errorCh <- err
@@ -116,21 +117,7 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 				errorCh <- err
 				return
 			}
-
-			redisNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, podName)
-			if err != nil {
-				logger.Error(err, "Failed to extract Redis node ID", "Pod", podName)
-				errorCh <- err
-				return
-			}
-
-			mu.Lock()
-			redisCluster.Status.MasterMap[redisNodeID] = redisv1beta1.RedisNodeStatus{
-				PodName: podName,
-				NodeID:  redisNodeID,
-			}
-			mu.Unlock()
-		}(i)
+		}(ports[i])
 	}
 
 	wg.Wait()
@@ -156,6 +143,9 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 		return err
 	}
 
+	if redisCluster.Status.NextAvailablePort == 0 {
+		redisCluster.Status.NextAvailablePort = redisCluster.Spec.BasePort
+	}
 	if redisCluster.Status.MasterMap == nil {
 		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
 	}

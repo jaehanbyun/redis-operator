@@ -152,31 +152,11 @@ func WaitForPodReady(ctx context.Context, k8scl kubernetes.Interface, redisClust
 	}
 }
 
-// FindAvailablePort finds an available port for a new Redis Pod within a specified range
-func FindAvailablePort(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) (int32, error) {
-	usedPorts := make(map[int32]bool)
-	podList, err := k8scl.CoreV1().Pods(redisCluster.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name),
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	for _, pod := range podList.Items {
-		port := ExtractPortFromPodName(pod.Name)
-		usedPorts[port] = true
-	}
-
-	basePort := redisCluster.Spec.BasePort
-	maxPort := basePort + redisCluster.Spec.Masters + redisCluster.Spec.Masters*redisCluster.Spec.Replicas + 100
-	for i := int32(0); i < maxPort; i++ {
-		port := basePort + i
-		if !usedPorts[port] {
-			return port, nil
-		}
-	}
-
-	return 0, fmt.Errorf("no available ports found in the range")
+// GetNextAvailablePort returns the next available port
+func GetNextAvailablePort(redisCluster *redisv1beta1.RedisCluster) int32 {
+	port := redisCluster.Status.NextAvailablePort
+	redisCluster.Status.NextAvailablePort++
+	return port
 }
 
 // UpdatePodLabelWithRedisID updates the Pod's labels to include the Redis node ID
