@@ -55,10 +55,23 @@ func HandleMasterScaling(ctx context.Context, cl client.Client, k8scl kubernetes
 	currentMasterCount := int32(len(redisCluster.Status.MasterMap))
 
 	if currentMasterCount < desiredMasterCount {
-		return ScaleUpMasters(ctx, cl, k8scl, redisCluster, logger, desiredMasterCount-currentMasterCount)
+		if err := ScaleUpMasters(ctx, cl, k8scl, redisCluster, logger, desiredMasterCount-currentMasterCount); err != nil {
+			return err
+		}
+		if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
+			logger.Error(err, "Error updating cluster status")
+			return err
+		}
 	} else if currentMasterCount > desiredMasterCount {
-		return ScaleDownMasters(ctx, cl, k8scl, redisCluster, logger, currentMasterCount-desiredMasterCount)
+		if err := ScaleDownMasters(ctx, cl, k8scl, redisCluster, logger, currentMasterCount-desiredMasterCount); err != nil {
+			return err
+		}
+		if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
+			logger.Error(err, "Error updating cluster status")
+			return err
+		}
 	}
+
 	return nil
 }
 
@@ -98,12 +111,8 @@ func ScaleUpMasters(ctx context.Context, cl client.Client, k8scl kubernetes.Inte
 			logger.Error(err, "Error adding new master to cluster", "NodeID", newMasterNodeID)
 			return err
 		}
-
-		if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
-			logger.Error(err, "Error updating cluster status")
-			return err
-		}
 	}
+
 	return nil
 }
 
@@ -143,10 +152,6 @@ func ScaleDownMasters(ctx context.Context, cl client.Client, k8scl kubernetes.In
 		}
 	}
 
-	if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
-		logger.Error(err, "Error updating cluster status")
-		return err
-	}
 	return nil
 }
 
@@ -167,11 +172,24 @@ func HandleReplicaScaling(ctx context.Context, cl client.Client, k8scl kubernete
 
 	if desiredTotalReplicas > currentReplicaCount {
 		replicasToAdd := desiredTotalReplicas - currentReplicaCount
-		return ScaleUpReplicas(ctx, cl, k8scl, redisCluster, logger, replicasToAdd, masterToReplicas)
+		if err := ScaleUpReplicas(ctx, cl, k8scl, redisCluster, logger, replicasToAdd, masterToReplicas); err != nil {
+			return err
+		}
+		if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
+			logger.Error(err, "Error updating cluster status")
+			return err
+		}
 	} else if desiredTotalReplicas < currentReplicaCount {
 		replicasToRemove := currentReplicaCount - desiredTotalReplicas
-		return ScaleDownReplicas(ctx, cl, k8scl, redisCluster, logger, replicasToRemove, masterToReplicas)
+		if err := ScaleDownReplicas(ctx, cl, k8scl, redisCluster, logger, replicasToRemove, masterToReplicas); err != nil {
+			return err
+		}
+		if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
+			logger.Error(err, "Error updating cluster status")
+			return err
+		}
 	}
+
 	return nil
 }
 
@@ -276,10 +294,6 @@ func ScaleDownReplicas(ctx context.Context, cl client.Client, k8scl kubernetes.I
 		}
 	}
 
-	if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
-		logger.Error(err, "Error updating cluster status")
-		return err
-	}
 	return nil
 }
 
