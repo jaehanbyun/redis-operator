@@ -23,7 +23,8 @@ func HandleClusterInitialization(ctx context.Context, cl client.Client, k8scl ku
 
 	if currentMasterCount == 0 && desiredMasterCount > 0 {
 		logger.Info("Initializing cluster")
-		if err := SetupRedisCluster(ctx, cl, k8scl, redisCluster, logger); err != nil {
+		newMastersCount := desiredMasterCount - currentMasterCount
+		if err := SetupRedisCluster(ctx, cl, k8scl, redisCluster, logger, newMastersCount); err != nil {
 			logger.Error(err, "Error setting up Redis cluster")
 			return err
 		}
@@ -81,21 +82,19 @@ func ScaleUpMasters(ctx context.Context, cl client.Client, k8scl kubernetes.Inte
 	logger.Info("Scaling up masters", "Masters to add", mastersToAdd)
 
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	errorCh := make(chan error, mastersToAdd)
 	newMasters := make([]redisv1beta1.RedisNodeStatus, 0, mastersToAdd)
 	masterCh := make(chan redisv1beta1.RedisNodeStatus, mastersToAdd)
-	ports := make([]int32, 0, mastersToAdd)
-
-	for i := int32(0); i < mastersToAdd; i++ {
-		port, _ := FindAvailablePort(ctx, k8scl, redisCluster, logger)
-		ports = append(ports, port)
-	}
 
 	for i := int32(0); i < mastersToAdd; i++ {
 		wg.Add(1)
-		go func(port int32) {
+		go func() {
 			defer wg.Done()
 
+			mu.Lock()
+			port := GetNextAvailablePort(redisCluster)
+			mu.Unlock()
 			if err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port); err != nil {
 				logger.Error(err, "Error creating master Pod")
 				errorCh <- err
@@ -121,7 +120,7 @@ func ScaleUpMasters(ctx context.Context, cl client.Client, k8scl kubernetes.Inte
 				NodeID:  newMasterNodeID,
 			}
 			masterCh <- newMaster
-		}(ports[i])
+		}()
 
 	}
 	wg.Wait()
@@ -232,32 +231,30 @@ func ScaleUpReplicas(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 	desiredReplicasPerMaster := redisCluster.Spec.Replicas
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 	errorCh := make(chan error, replicasToAdd)
 	newReplicas := make([]redisv1beta1.RedisNodeStatus, 0, replicasToAdd)
+	replicaCh := make(chan redisv1beta1.RedisNodeStatus, replicasToAdd)
+
+	ports := make([]int32, replicasToAdd)
+	for i := int32(0); i < replicasToAdd; i++ {
+		ports[i] = GetNextAvailablePort(redisCluster)
+	}
+
+	assignments := make([]string, replicasToAdd)
+	for i := range assignments {
+		for masterID, count := range masterToReplicas {
+			if count < desiredReplicasPerMaster {
+				assignments[i] = masterID
+				masterToReplicas[masterID]++
+				break
+			}
+		}
+	}
 
 	for i := int32(0); i < replicasToAdd; i++ {
 		wg.Add(1)
-		go func() {
+		go func(assignedMasterID string, port int32) {
 			defer wg.Done()
-			var assignedMasterID string
-			mu.Lock()
-			for masterID, count := range masterToReplicas {
-				if count < desiredReplicasPerMaster {
-					assignedMasterID = masterID
-					masterToReplicas[masterID]++
-					break
-				}
-			}
-			mu.Unlock()
-
-			port, err := FindAvailablePort(ctx, k8scl, redisCluster, logger)
-			if err != nil {
-				logger.Error(err, "Failed to find replica port")
-				errorCh <- err
-				return
-			}
-
 			if err := CreateReplicaPod(ctx, k8scl, redisCluster, logger, port, assignedMasterID); err != nil {
 				logger.Error(err, "Error creating replica Pod")
 				errorCh <- err
@@ -278,22 +275,23 @@ func ScaleUpReplicas(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 				return
 			}
 
-			newReplica := redisv1beta1.RedisNodeStatus{
+			replicaCh <- redisv1beta1.RedisNodeStatus{
 				PodName:      newReplicaPodName,
 				NodeID:       newReplicaNodeID,
 				MasterNodeID: assignedMasterID,
 			}
-
-			mu.Lock()
-			newReplicas = append(newReplicas, newReplica)
-			mu.Unlock()
-		}()
+		}(assignments[i], ports[i])
 	}
+
 	wg.Wait()
 	close(errorCh)
 
 	if len(errorCh) > 0 {
 		return <-errorCh
+	}
+
+	for replica := range replicaCh {
+		newReplicas = append(newReplicas, replica)
 	}
 
 	if err := AddReplicaToMaster(k8scl, redisCluster, logger, newReplicas); err != nil {
@@ -309,37 +307,58 @@ func ScaleDownReplicas(ctx context.Context, cl client.Client, k8scl kubernetes.I
 	logger.Info("Scaling down replicas", "Replicas to remove", replicasToRemove)
 	desiredReplicasPerMaster := redisCluster.Spec.Replicas
 
+	var wg sync.WaitGroup
+	errorCh := make(chan error, replicasToRemove)
+	removedReplicas := int32(0)
+
 	for masterID, replicas := range masterToReplicas {
 		excessReplicas := replicas - desiredReplicasPerMaster
-		if excessReplicas > 0 {
-			replicasList := GetReplicasToRemoveFromMaster(redisCluster, masterID, excessReplicas, logger)
+		if excessReplicas <= 0 {
+			continue
+		}
 
-			for _, replicaNodeID := range replicasList {
+		replicasList := GetReplicasToRemoveFromMaster(redisCluster, masterID, excessReplicas, logger)
+
+		for _, replicaNodeID := range replicasList {
+			if removedReplicas >= replicasToRemove {
+				break
+			}
+
+			wg.Add(1)
+			go func(replicaNodeID string) {
+				defer wg.Done()
+
 				replica := redisCluster.Status.ReplicaMap[replicaNodeID]
 
 				if err := RemoveNodeFromCluster(k8scl, redisCluster, logger, replica); err != nil {
 					logger.Error(err, "Error removing replica from cluster", "ReplicaNodeID", replicaNodeID)
-					return err
+					errorCh <- err
+					return
 				}
 
 				if err := DeleteRedisPod(ctx, k8scl, redisCluster, logger, replica.PodName); err != nil {
 					logger.Error(err, "Error deleting replica Pod", "PodName", replica.PodName)
-					return err
+					errorCh <- err
+					return
 				}
 
 				delete(redisCluster.Status.ReplicaMap, replicaNodeID)
-
 				masterToReplicas[masterID]--
-				replicasToRemove--
-				if replicasToRemove == 0 {
-					break
-				}
-			}
+			}(replicaNodeID)
+
+			removedReplicas++
 		}
 
-		if replicasToRemove == 0 {
+		if removedReplicas >= replicasToRemove {
 			break
 		}
+	}
+
+	wg.Wait()
+	close(errorCh)
+
+	if len(errorCh) > 0 {
+		return <-errorCh
 	}
 
 	return nil
