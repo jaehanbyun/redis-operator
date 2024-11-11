@@ -11,7 +11,6 @@ import (
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -132,11 +131,6 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 
 // UpdateClusterStatus updates the RedisCluster's MasterMap and ReplicaMap by querying the current Redis cluster nodes
 func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
-	if err := cl.Get(ctx, types.NamespacedName{Name: redisCluster.Name, Namespace: redisCluster.Namespace}, redisCluster); err != nil {
-		logger.Error(err, "Failed to get latest RedisCluster state")
-		return err
-	}
-
 	nodesInfo, err := GetClusterNodesInfo(ctx, k8scl, redisCluster, logger)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster node information")
