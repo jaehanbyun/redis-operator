@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -94,34 +95,49 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	errorCh := make(chan error, desiredMastersCount-currentMasterCount)
+
 	for i := int32(0); i < desiredMastersCount-currentMasterCount; i++ {
-		port := redisCluster.Spec.BasePort + currentMasterCount + i
-		err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port)
-		if err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func(offset int32) {
+			defer wg.Done()
+			port := redisCluster.Spec.BasePort + currentMasterCount + offset
+			err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port)
+			if err != nil {
+				errorCh <- err
+				return
+			}
 
-		podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
-		if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, podName); err != nil {
-			logger.Error(err, "Error waiting for master Pod to be ready", "Pod", podName)
-			return err
-		}
+			podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
+			if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, podName); err != nil {
+				logger.Error(err, "Error waiting for master Pod to be ready", "Pod", podName)
+				errorCh <- err
+				return
+			}
 
-		redisNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, podName)
-		if err != nil {
-			logger.Error(err, "Failed to extract Redis node ID", "Pod", podName)
-			return err
-		}
+			redisNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, podName)
+			if err != nil {
+				logger.Error(err, "Failed to extract Redis node ID", "Pod", podName)
+				errorCh <- err
+				return
+			}
 
-		if err := UpdatePodLabelWithRedisID(ctx, k8scl, redisCluster, logger, podName, redisNodeID); err != nil {
-			logger.Error(err, "Failed to update Pod label", "Pod", podName)
-			return err
-		}
+			mu.Lock()
+			redisCluster.Status.MasterMap[redisNodeID] = redisv1beta1.RedisNodeStatus{
+				PodName: podName,
+				NodeID:  redisNodeID,
+			}
+			mu.Unlock()
+		}(i)
+	}
 
-		redisCluster.Status.MasterMap[redisNodeID] = redisv1beta1.RedisNodeStatus{
-			PodName: podName,
-			NodeID:  redisNodeID,
-		}
+	wg.Wait()
+	close(errorCh)
+
+	if len(errorCh) > 0 {
+		return <-errorCh
 	}
 
 	return nil
