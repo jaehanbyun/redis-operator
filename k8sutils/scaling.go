@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -78,39 +79,71 @@ func HandleMasterScaling(ctx context.Context, cl client.Client, k8scl kubernetes
 // ScaleUpMasters scales up the master nodes in the Redis cluster
 func ScaleUpMasters(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, mastersToAdd int32) error {
 	logger.Info("Scaling up masters", "Masters to add", mastersToAdd)
+
+	var wg sync.WaitGroup
+	errorCh := make(chan error, mastersToAdd)
+	newMasters := make([]redisv1beta1.RedisNodeStatus, 0, mastersToAdd)
+	masterCh := make(chan redisv1beta1.RedisNodeStatus, mastersToAdd)
+	ports := make([]int32, 0, mastersToAdd)
+
 	for i := int32(0); i < mastersToAdd; i++ {
-		port, err := FindAvailablePort(ctx, k8scl, redisCluster, logger)
-		if err != nil {
-			logger.Error(err, "Failed to find available port")
-			return err
-		}
+		port, _ := FindAvailablePort(ctx, k8scl, redisCluster, logger)
+		ports = append(ports, port)
+	}
 
-		if err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port); err != nil {
-			logger.Error(err, "Error creating master Pod")
-			return err
-		}
+	for i := int32(0); i < mastersToAdd; i++ {
+		wg.Add(1)
+		go func(port int32) {
+			defer wg.Done()
 
-		newMasterPodName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
-		if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, newMasterPodName); err != nil {
-			logger.Error(err, "Error waiting for new master Pod to be ready", "Pod", newMasterPodName)
-			return err
-		}
+			if err := CreateMasterPod(ctx, k8scl, redisCluster, logger, port); err != nil {
+				logger.Error(err, "Error creating master Pod")
+				errorCh <- err
+				return
+			}
 
-		newMasterNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, newMasterPodName)
-		if err != nil {
-			logger.Error(err, "Error getting NodeID of new master", "Pod", newMasterPodName)
-			return err
-		}
+			newMasterPodName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
+			if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, newMasterPodName); err != nil {
+				logger.Error(err, "Error waiting for new master Pod to be ready", "Pod", newMasterPodName)
+				errorCh <- err
+				return
+			}
 
-		newMaster := redisv1beta1.RedisNodeStatus{
-			PodName: newMasterPodName,
-			NodeID:  newMasterNodeID,
-		}
+			newMasterNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, newMasterPodName)
+			if err != nil {
+				logger.Error(err, "Error getting NodeID of new master", "Pod", newMasterPodName)
+				errorCh <- err
+				return
+			}
 
-		if err := AddMasterToCluster(k8scl, redisCluster, logger, newMaster); err != nil {
-			logger.Error(err, "Error adding new master to cluster", "NodeID", newMasterNodeID)
-			return err
-		}
+			newMaster := redisv1beta1.RedisNodeStatus{
+				PodName: newMasterPodName,
+				NodeID:  newMasterNodeID,
+			}
+			masterCh <- newMaster
+		}(ports[i])
+
+	}
+	wg.Wait()
+	close(errorCh)
+	close(masterCh)
+
+	if len(errorCh) > 0 {
+		return <-errorCh
+	}
+
+	for master := range masterCh {
+		newMasters = append(newMasters, master)
+	}
+
+	if err := AddMasterToCluster(k8scl, redisCluster, logger, newMasters); err != nil {
+		logger.Error(err, "Error adding new master to cluster")
+		return err
+	}
+
+	if err := RebalanceCluster(k8scl, redisCluster, logger, true); err != nil {
+		logger.Error(err, "Error during cluster rebalancing")
+		return err
 	}
 
 	return nil
@@ -145,11 +178,11 @@ func ScaleDownMasters(ctx context.Context, cl client.Client, k8scl kubernetes.In
 		}
 
 		delete(redisCluster.Status.MasterMap, masterNodeID)
+	}
 
-		if err := RebalanceCluster(k8scl, redisCluster, logger, false); err != nil {
-			logger.Error(err, "Error during cluster rebalancing")
-			return err
-		}
+	if err := RebalanceCluster(k8scl, redisCluster, logger, false); err != nil {
+		logger.Error(err, "Error during cluster rebalancing")
+		return err
 	}
 
 	return nil
@@ -399,7 +432,7 @@ func WaitForSlotMigration(ctx context.Context, redisClient *redis.Client, logger
 }
 
 // AddMasterToCluster adds a new master node to the Redis cluster and rebalances the slots
-func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, newMaster redisv1beta1.RedisNodeStatus) error {
+func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, newMasters []redisv1beta1.RedisNodeStatus) error {
 	var existingMaster redisv1beta1.RedisNodeStatus
 	for _, master := range redisCluster.Status.MasterMap {
 		existingMaster = master
@@ -407,24 +440,22 @@ func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.R
 	}
 
 	existingMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, existingMaster.PodName)
-	newMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, newMaster.PodName)
+	for _, newMaster := range newMasters {
+		newMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, newMaster.PodName)
 
-	addNodeCmd := []string{"redis-cli", "--cluster", "add-node", newMasterAddress, existingMasterAddress}
-	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, addNodeCmd)
-	if err != nil {
-		logger.Error(err, "Error adding new master node to cluster", "Output", output)
-		return err
-	}
-	logger.Info("Successfully added new master node to cluster", "Node", newMaster.PodName)
+		addNodeCmd := []string{"redis-cli", "--cluster", "add-node", newMasterAddress, existingMasterAddress}
+		output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, addNodeCmd)
+		if err != nil {
+			logger.Error(err, "Error adding new master node to cluster", "Output", output)
+			return err
+		}
 
-	if err := WaitForClusterStabilization(k8scl, redisCluster, logger); err != nil {
-		logger.Error(err, "Error during cluster stabilization")
-		return err
-	}
+		if err := WaitForClusterStabilization(k8scl, redisCluster, logger); err != nil {
+			logger.Error(err, "Error during cluster stabilization")
+			return err
+		}
 
-	if err := RebalanceCluster(k8scl, redisCluster, logger, true); err != nil {
-		logger.Error(err, "Error during cluster rebalancing")
-		return err
+		logger.Info("Successfully added new master node to cluster", "Node", newMaster.PodName)
 	}
 
 	return nil
