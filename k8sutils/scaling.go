@@ -231,61 +231,76 @@ func ScaleUpReplicas(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 	logger.Info("Scaling up replicas", "Replicas to add", replicasToAdd)
 	desiredReplicasPerMaster := redisCluster.Spec.Replicas
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	errorCh := make(chan error, replicasToAdd)
+	newReplicas := make([]redisv1beta1.RedisNodeStatus, 0, replicasToAdd)
+
 	for i := int32(0); i < replicasToAdd; i++ {
-		var assignedMasterID string
-		for masterID, count := range masterToReplicas {
-			if count < desiredReplicasPerMaster {
-				assignedMasterID = masterID
-				break
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var assignedMasterID string
+			mu.Lock()
+			for masterID, count := range masterToReplicas {
+				if count < desiredReplicasPerMaster {
+					assignedMasterID = masterID
+					masterToReplicas[masterID]++
+					break
+				}
 			}
-		}
+			mu.Unlock()
 
-		port, err := FindAvailablePort(ctx, k8scl, redisCluster, logger)
-		if err != nil {
-			logger.Error(err, "Failed to find replica port")
-			return err
-		}
+			port, err := FindAvailablePort(ctx, k8scl, redisCluster, logger)
+			if err != nil {
+				logger.Error(err, "Failed to find replica port")
+				errorCh <- err
+				return
+			}
 
-		if err := CreateReplicaPod(ctx, k8scl, redisCluster, logger, port, assignedMasterID); err != nil {
-			logger.Error(err, "Error creating replica Pod")
-			return err
-		}
+			if err := CreateReplicaPod(ctx, k8scl, redisCluster, logger, port, assignedMasterID); err != nil {
+				logger.Error(err, "Error creating replica Pod")
+				errorCh <- err
+				return
+			}
 
-		newReplicaPodName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
-		if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, newReplicaPodName); err != nil {
-			logger.Error(err, "Error waiting for new replica Pod to be ready", "Pod", newReplicaPodName)
-			return err
-		}
+			newReplicaPodName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
+			if err := WaitForPodReady(ctx, k8scl, redisCluster, logger, newReplicaPodName); err != nil {
+				logger.Error(err, "Error waiting for new replica Pod to be ready", "Pod", newReplicaPodName)
+				errorCh <- err
+				return
+			}
 
-		newReplicaNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, newReplicaPodName)
-		if err != nil {
-			logger.Error(err, "Error getting NodeID of replica", "Pod", newReplicaPodName)
-			return err
-		}
+			newReplicaNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, newReplicaPodName)
+			if err != nil {
+				logger.Error(err, "Error getting NodeID of replica", "Pod", newReplicaPodName)
+				errorCh <- err
+				return
+			}
 
-		if redisCluster.Status.ReplicaMap == nil {
-			redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
-		}
-		redisCluster.Status.ReplicaMap[newReplicaNodeID] = redisv1beta1.RedisNodeStatus{
-			PodName:      newReplicaPodName,
-			NodeID:       newReplicaNodeID,
-			MasterNodeID: assignedMasterID,
-		}
+			newReplica := redisv1beta1.RedisNodeStatus{
+				PodName:      newReplicaPodName,
+				NodeID:       newReplicaNodeID,
+				MasterNodeID: assignedMasterID,
+			}
 
-		newReplica := redisCluster.Status.ReplicaMap[newReplicaNodeID]
-
-		if err := AddReplicaToMaster(k8scl, redisCluster, logger, newReplica); err != nil {
-			logger.Error(err, "Error adding replica to master", "ReplicaNodeID", newReplicaNodeID)
-			return err
-		}
-
-		if err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger); err != nil {
-			logger.Error(err, "Error updating cluster status")
-			return err
-		}
-
-		masterToReplicas[assignedMasterID]++
+			mu.Lock()
+			newReplicas = append(newReplicas, newReplica)
+			mu.Unlock()
+		}()
 	}
+	wg.Wait()
+	close(errorCh)
+
+	if len(errorCh) > 0 {
+		return <-errorCh
+	}
+
+	if err := AddReplicaToMaster(k8scl, redisCluster, logger, newReplicas); err != nil {
+		logger.Error(err, "Error adding new replicas to masters")
+		return err
+	}
+
 	return nil
 }
 
@@ -458,6 +473,38 @@ func AddMasterToCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.R
 		logger.Info("Successfully added new master node to cluster", "Node", newMaster.PodName)
 	}
 
+	return nil
+}
+
+// AddReplicaToMaster adds a replica node to the specified master node in the cluster
+func AddReplicaToMaster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, newReplicas []redisv1beta1.RedisNodeStatus) error {
+	for _, replica := range newReplicas {
+		master, exists := redisCluster.Status.MasterMap[replica.MasterNodeID]
+		if !exists {
+			errMsg := "Master node not found"
+			err := fmt.Errorf("%s: MasterNodeID=%s", errMsg, replica.MasterNodeID)
+			logger.Error(err, errMsg, "MasterNodeID", replica.MasterNodeID)
+			return err
+		}
+		masterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, master.PodName)
+		replicaAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, replica.PodName)
+
+		addNodeCmd := []string{"redis-cli", "--cluster", "add-node", replicaAddress, masterAddress, "--cluster-slave"}
+		output, err := RunRedisCLI(k8scl, redisCluster.Namespace, master.PodName, addNodeCmd)
+		if err != nil {
+			logger.Error(err, "Error adding replica to master", "Output", output)
+			return err
+		}
+		logger.Info("Successfully added replica to master", "Replica", replica.PodName, "Master", master.PodName)
+
+		err = WaitForNodeRole(k8scl, redisCluster, logger, replica.NodeID, "slave", 30*time.Second)
+		if err != nil {
+			logger.Error(err, "Node did not transition to replica role", "NodeID", replica.NodeID)
+			return err
+		}
+		logger.Info("Node transitioned to replica role", "NodeID", replica.NodeID)
+
+	}
 	return nil
 }
 
