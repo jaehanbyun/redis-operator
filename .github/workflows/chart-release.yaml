@@ -1,0 +1,60 @@
+name: Push Helm Chart
+
+on:
+  push:
+    paths:
+      - 'charts/**'
+    branches:
+      - main
+
+env:
+  CHART_PATH: ./charts/redis-operator
+  GH_PAGE_PATH: charts-gh-pages
+
+jobs:
+  update-chart:
+    permissions: 
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.16.1
+      
+      - name: Update Helm dependencies
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+          helm dependency update ${{ env.CHART_PATH }}
+     
+      - name: Package Helm Chart
+        run: |
+          helm package ${{ env.CHART_PATH }}
+
+      - name: Checkout charts-gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GH_PAGE_PATH }}
+          path: ${{ env.GH_PAGE_PATH }}
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Update Helm repo index
+        run: |
+          mv *.tgz ${{ env.GH_PAGE_PATH }}/
+          helm repo index ${{ env.GH_PAGE_PATH }} --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ --merge ${{ env.GH_PAGE_PATH }}/index.yaml
+    
+      - name: Commit and Push to charts-gh-pages
+        run: |
+          cd ${{ env.GH_PAGE_PATH }}
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git add .
+          git commit -m "Update Helm chart for Redis Operator"
+          git push origin ${{ env.GH_PAGE_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
