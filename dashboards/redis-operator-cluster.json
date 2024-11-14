@@ -112,7 +112,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "count(redis_up{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"})",
+                    "expr": "count(redis_up{namespace=~\"$namespace\",clusterName=~\"$clusterName\"})",
                     "interval": "",
                     "legendFormat": "",
                     "range": true,
@@ -173,7 +173,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "count(redis_instance_info{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\",role=\"master\"})",
+                    "expr": "count(redis_instance_info{namespace=~\"$namespace\",clusterName=~\"$clusterName\",role=\"master\"})",
                     "interval": "",
                     "legendFormat": "__auto",
                     "range": true,
@@ -244,7 +244,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "avg((redis_config_maxclients{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"} - redis_connected_clients{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}) / redis_config_maxclients{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"})",
+                    "expr": "avg((redis_config_maxclients{namespace=~\"$namespace\",clusterName=~\"$clusterName\"} - redis_connected_clients{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}) / redis_config_maxclients{namespace=~\"$namespace\",clusterName=~\"$clusterName\"})",
                     "interval": "",
                     "legendFormat": "",
                     "range": true,
@@ -337,7 +337,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "redis_connected_clients{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}",
+                    "expr": "redis_connected_clients{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}",
                     "interval": "",
                     "legendFormat": "{{pod}}",
                     "range": true,
@@ -403,7 +403,7 @@
                     "disableTextWrap": false,
                     "editorMode": "builder",
                     "exemplar": true,
-                    "expr": "sum(redis_connected_clients{namespace=~\"$namespace\", cluster_name=~\"$cluster_name\"})",
+                    "expr": "sum(redis_connected_clients{namespace=~\"$namespace\", clusterName=~\"$clusterName\"})",
                     "fullMetaSearch": false,
                     "includeNullMetadata": true,
                     "interval": "",
@@ -467,7 +467,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "sum(redis_instance_info{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\",role=\"master\"})",
+                    "expr": "sum(redis_instance_info{namespace=~\"$namespace\",clusterName=~\"$clusterName\",role=\"master\"})",
                     "interval": "",
                     "legendFormat": "",
                     "range": true,
@@ -562,7 +562,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "increase(redis_commands_processed_total{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}[$__rate_interval])",
+                    "expr": "increase(redis_commands_processed_total{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}[$__rate_interval])",
                     "interval": "",
                     "legendFormat": "{{pod}}",
                     "range": true,
@@ -655,7 +655,7 @@
                     "datasource": "${DS_PROMETHEUS}",
                     "editorMode": "code",
                     "exemplar": true,
-                    "expr": "avg(irate(redis_commands_duration_seconds_total{namespace=~\"$namespace\", cluster_name=\"$cluster_name\"}[1m])) by (cmd)\n  /\navg(irate(redis_commands_total{namespace=~\"$namespace\",cluster_name=\"$cluster_name\"}[1m])) by (cmd)",
+                    "expr": "avg(irate(redis_commands_duration_seconds_total{namespace=~\"$namespace\", clusterName=\"$clusterName\"}[1m])) by (cmd)\n  /\navg(irate(redis_commands_total{namespace=~\"$namespace\",clusterName=\"$clusterName\"}[1m])) by (cmd)",
                     "interval": "",
                     "legendFormat": "{{cmd}}",
                     "range": true,
@@ -742,7 +742,7 @@
             "targets": [
                 {
                     "exemplar": true,
-                    "expr": "topk(5, increase(redis_commands_total{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"} [$__rate_interval]))",
+                    "expr": "topk(5, increase(redis_commands_total{namespace=~\"$namespace\",clusterName=~\"$clusterName\"} [$__rate_interval]))",
                     "interval": "",
                     "legendFormat": "{{cmd}}",
                     "refId": "A"
@@ -802,7 +802,7 @@
             "targets": [
                 {
                     "exemplar": true,
-                    "expr": "100 * redis_memory_used_bytes{namespace=~\"$namespace\",cluster_name=\"$cluster_name\"} / redis_memory_max_bytes{namespace=~\"$namespace\",cluster_name=\"$cluster_name\"}",
+                    "expr": "100 * redis_memory_used_bytes{namespace=~\"$namespace\",clusterName=\"$clusterName\"} / redis_memory_max_bytes{namespace=~\"$namespace\",clusterName=\"$clusterName\"}",
                     "interval": "",
                     "legendFormat": "{{pod}}",
                     "refId": "A"
@@ -892,7 +892,7 @@
             "targets": [
                 {
                     "exemplar": true,
-                    "expr": "redis_memory_used_bytes{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}",
+                    "expr": "redis_memory_used_bytes{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}",
                     "interval": "",
                     "legendFormat": "{{pod}}",
                     "refId": "A"
@@ -982,7 +982,7 @@
             "targets": [
                 {
                     "exemplar": true,
-                    "expr": "rate(redis_net_input_bytes_total{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}[$__rate_interval])",
+                    "expr": "rate(redis_net_input_bytes_total{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}[$__rate_interval])",
                     "interval": "",
                     "legendFormat": "{{pod}}",
                     "refId": "A"
@@ -1072,7 +1072,7 @@
             "targets": [
                 {
                     "exemplar": true,
-                    "expr": "rate(redis_net_output_bytes_total{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}[$__rate_interval])",
+                    "expr": "rate(redis_net_output_bytes_total{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}[$__rate_interval])",
                     "interval": "",
                     "legendFormat": "{{pod}}",
                     "refId": "A"
@@ -1139,7 +1139,7 @@
             "steppedLine": false,
             "targets": [
                 {
-                    "expr": "sum(rate(redis_expired_keys_total{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}[5m]))",
+                    "expr": "sum(rate(redis_expired_keys_total{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}[5m]))",
                     "format": "time_series",
                     "interval": "",
                     "intervalFactor": 2,
@@ -1150,7 +1150,7 @@
                     "target": ""
                 },
                 {
-                    "expr": "sum(rate(redis_evicted_keys_total{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}[5m]))",
+                    "expr": "sum(rate(redis_evicted_keys_total{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}[5m]))",
                     "format": "time_series",
                     "interval": "",
                     "intervalFactor": 2,
@@ -1247,7 +1247,7 @@
             "steppedLine": false,
             "targets": [
                 {
-                    "expr": "sum (redis_db_keys{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}) - sum (redis_db_keys_expiring{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}) ",
+                    "expr": "sum (redis_db_keys{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}) - sum (redis_db_keys_expiring{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}) ",
                     "format": "time_series",
                     "interval": "",
                     "intervalFactor": 2,
@@ -1257,7 +1257,7 @@
                     "target": ""
                 },
                 {
-                    "expr": "sum (redis_db_keys_expiring{namespace=~\"$namespace\",cluster_name=~\"$cluster_name\"}) ",
+                    "expr": "sum (redis_db_keys_expiring{namespace=~\"$namespace\",clusterName=~\"$clusterName\"}) ",
                     "format": "time_series",
                     "interval": "",
                     "intervalFactor": 2,
@@ -1342,17 +1342,17 @@
                 "allValue": null,
                 "current": {},
                 "datasource": "${DS_PROMETHEUS}",
-                "definition": "label_values(redis_up{namespace=\"$namespace\"},cluster_name)",
+                "definition": "label_values(redis_up{namespace=\"$namespace\"},clusterName)",
                 "description": null,
                 "error": null,
                 "hide": 0,
                 "includeAll": false,
                 "label": "Cluster Name",
-                "name": "cluster_name",
+                "name": "clusterName",
                 "multi": false,
                 "options": [],
                 "query": {
-                    "query": "label_values(redis_up{namespace=\"$namespace\"},cluster_name)",
+                    "query": "label_values(redis_up{namespace=\"$namespace\"},clusterName)",
                     "refId": "PrometheusVariableQueryEditor-VariableQuery"
                 },
                 "refresh": 1,
