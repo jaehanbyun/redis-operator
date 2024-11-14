@@ -19,5 +19,5 @@ spec:
     - port: 9090
       protocol: TCP
       targetPort: 9090
-  type: {{ .Values.service.type }}
+  type: {{ .Values.redisOperator.service.type }}
   

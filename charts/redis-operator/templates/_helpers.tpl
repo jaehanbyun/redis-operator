@@ -1,3 +1,7 @@
+{{- define "redisOperator.fullname" -}}
+{{ .Values.redisOperator.name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{/*
 Common labels
 */}}

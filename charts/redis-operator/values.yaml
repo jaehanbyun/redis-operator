@@ -5,44 +5,79 @@ redisOperator:
   imageTag: ""
   imagePullSecrets: []
 
-replicaCount: 1
+  replicaCount: 1
 
-service:
-  type: ClusterIP
+  service:
+    type: ClusterIP
 
-podAnnotations: {}
-podLabels: {}
+  podAnnotations: {}
+  podLabels: {}
 
-podSecurityContext:
-  # fsGroup: 2000
+  podSecurityContext:
+    # fsGroup: 2000
 
-securityContext:
-  # runAsNonRoot: true
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+  securityContext:
+    # runAsNonRoot: true
+    # capabilities:
+    #   drop:
+    #   - ALL
+    # readOnlyRootFilesystem: true
+    # runAsNonRoot: true
+    # runAsUser: 1000
 
-resources:
-  limits:
-    cpu: 500m
-    memory: 500Mi
-  requests:
-    cpu: 500m
-    memory: 500Mi
+  resources:
+    limits:
+      cpu: 500m
+      memory: 500Mi
+    requests:
+      cpu: 500m
+      memory: 500Mi
 
-# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
-# livenessProbe:
-#   httpGet:
-#     path: /
-#     port: http
-# readinessProbe:
-#   httpGet:
-#     path: /
-#     port: http
+  # This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+  # livenessProbe:
+  #   httpGet:
+  #     path: /
+  #     port: http
+  # readinessProbe:
+  #   httpGet:
+  #     path: /
+  #     port: http
 
-nodeSelector: {}
-tolerations: []
-affinity: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## Using default values from https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus/values.yaml
+##
+prometheus:
+  enabled: true
+
+  prometheus-node-exporter:
+    enabled: false
+
+  prometheus-pushgateway:
+    enabled: false
+
+  kube-state-metrics:
+    enabled: false
+
+  server:
+    global:
+      scrape_interval: 5s
+      scrape_timeout: 5s
+      evaluation_interval: 30s
+
+  alertmanager: {}
+
+## Using default values from https://github.com/grafana/helm-charts/blob/main/charts/grafana/values.yaml
+##
+grafana:
+  enabled: true
+
+  adminPassword: prom-operator
+
+  sidecar:
+    dashboards:
+      enabled: true
+    datasources:
+      enabled: true
