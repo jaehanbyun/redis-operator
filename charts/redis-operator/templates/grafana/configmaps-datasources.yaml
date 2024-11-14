@@ -1,0 +1,20 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-datasource
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-grafana
+    grafana_datasource: "1"
+data:
+  datasource.yaml: |-
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      uid: prometheus
+      url: http://{{ .Release.Name }}-prometheus-server:{{ .Values.prometheus.server.service.servicePort }}
+      access: proxy
+      isDefault: true
+{{- end }}
