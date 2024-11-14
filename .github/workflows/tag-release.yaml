@@ -1,0 +1,86 @@
+name: Build, Push Image and Release on Tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REPOSITORY: awbrg789
+  CHART_PATH: ./charts/redis-operator
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+      - name: Determine Version(Tag)
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Build and Push Docker Image on Tag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: | 
+            ${{ env.REPOSITORY }}/redis-operator:latest
+            ${{ env.REPOSITORY }}/redis-operator:${{ env.VERSION }}
+    
+  release:
+    permissions: 
+      contents: write
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          token: ${{ secrets.GIT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set VERSION and VERSION_WITHOUT_V
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "VERSION_WITHOUT_V=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" >> $GITHUB_ENV
+
+      - name: Update Chart and Makefile Versions
+        run: |
+          sed -i 's/^appVersion: .*$/appVersion: "${{ env.VERSION_WITHOUT_V }}"/' ${{ env.CHART_PATH }}/Chart.yaml
+          sed -i 's/^VERSION ?= .*$/VERSION ?= ${{ env.VERSION_WITHOUT_V }}/' Makefile
+        
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          
+      - name: Commit and Push to main branch
+        run: |
+          git add ${{ env.CHART_PATH }}/Chart.yaml Makefile
+          git commit -m "Update Helm chart for Redis Operator"
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ env.VERSION }}
+          body: |
+            Redis Operator Release ${{ env.VERSION }}
+            
+            Docker Image: ${{ env.REPOSITORY }}/redis-operator:${{ env.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
