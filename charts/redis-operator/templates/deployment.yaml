@@ -32,7 +32,7 @@ spec:
             - /manager
           args:
             - --leader-elect
-          image: {{ printf "%s:%s" .Values.redisOperator.imageName (default "latest" .Values.redisOperator.imageTag) | quote }}
+          image: "{{ .Values.redisOperator.imageName }}:{{ .Values.redisOperator.imageTag | default (printf "v%s" .Chart.AppVersion) }}"
           name: {{ .Values.redisOperator.name }}
           imagePullPolicy: {{ .Values.redisOperator.imagePullPolicy }}
           securityContext:
