@@ -11,7 +11,6 @@ import (
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -595,7 +594,7 @@ func FixCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisClus
 
 	cmd := []string{
 		"sh", "-c",
-		fmt.Sprintf("echo yes | redis-cli --cluster fix %s", existingMasterAddress),
+		fmt.Sprintf("echo yes | redis-cli --cluster fix %s --cluster-fix-with-unreachable-masters", existingMasterAddress),
 	}
 	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, cmd)
 	if err != nil {
@@ -626,22 +625,14 @@ func handleFailedNode(ctx context.Context, cl client.Client, k8scl kubernetes.In
 		}
 
 		err = cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: node.PodName}, &corev1.Pod{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				podName, err := GetPodNameByNodeID(k8scl, redisCluster.Namespace, node.NodeID, logger)
-				if err != nil {
-					logger.Error(err, "Failed to get Pod name by NodeID", "NodeID", node.NodeID)
-					continue
-				}
-				err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, podName)
-				if err != nil {
-					logger.Error(err, "Error deleting failed node Pod", "PodName", podName)
-					return fmt.Errorf("failed to delete pod %s: %v", podName, err)
-				}
-				logger.Info("Successfully deleted failed node Pod", "PodName", podName)
+		if err == nil {
+			err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, node.PodName)
+			if err != nil {
+				logger.Error(err, "Error deleting failed node Pod", "PodName", node.PodName)
+				return fmt.Errorf("failed to delete pod %s: %v", node.PodName, err)
 			}
+			logger.Info("Successfully deleted failed node Pod", "PodName", node.PodName)
 		}
-		resetFailureCount(redisCluster, node.NodeID)
 	}
 
 	if err := FixCluster(k8scl, redisCluster, logger); err != nil {
