@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -132,6 +133,7 @@ func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&redisv1beta1.RedisCluster{}),
 			builder.WithPredicates(predicate.Funcs{
 				DeleteFunc: func(e event.DeleteEvent) bool {
+					time.Sleep(10 * time.Second)
 					return true
 				},
 				CreateFunc: func(e event.CreateEvent) bool {
