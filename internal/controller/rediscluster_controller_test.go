@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -45,6 +46,9 @@ var _ = Describe("RedisCluster Controller", func() {
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind RedisCluster")
 			err := k8sClient.Get(ctx, typeNamespacedName, rediscluster)
+			os.Setenv("RECONCILE_INTERVAL", "0s")
+			os.Setenv("MAX_CONCURRENT_RECONCILES", "5")
+
 			if err != nil && errors.IsNotFound(err) {
 				resource := &redisv1beta1.RedisCluster{
 					ObjectMeta: metav1.ObjectMeta{

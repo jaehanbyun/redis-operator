@@ -18,6 +18,9 @@ package controller
 
 import (
 	"context"
+	"log"
+	"os"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,9 +28,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
@@ -52,6 +59,11 @@ type RedisClusterReconciler struct {
 const RedisClusterFinalizer string = "redisClusterFinalizer"
 
 func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	reconcileInterval, err := time.ParseDuration(os.Getenv("RECONCILE_INTERVAL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	clusterLogger := r.Log.WithValues("redisCluster", req.NamespacedName)
 	clusterLogger.Info("Reconciling RedisCluster")
 
@@ -86,7 +98,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Update cluster status
 	if err := k8sutils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
-		return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
+		return ctrl.Result{RequeueAfter: reconcileInterval}, nil
 	}
 
 	// Handle cluster initialization
@@ -104,7 +116,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
+	return ctrl.Result{RequeueAfter: reconcileInterval}, nil
 }
 
 func (r *RedisClusterReconciler) reconcileDelete(ctx context.Context, logger logr.Logger, redisCluster *redisv1beta1.RedisCluster) (ctrl.Result, error) {
@@ -121,11 +133,34 @@ func (r *RedisClusterReconciler) reconcileDelete(ctx context.Context, logger log
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrentReconciles, err := strconv.Atoi(os.Getenv("MAX_CONCURRENT_RECONCILES"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1beta1.RedisCluster{}).
-		Owns(&corev1.Pod{}).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestForOwner(
+			mgr.GetScheme(),
+			mgr.GetRESTMapper(),
+			&redisv1beta1.RedisCluster{}),
+			builder.WithPredicates(predicate.Funcs{
+				DeleteFunc: func(e event.DeleteEvent) bool { // Trigger a reconcile upon pod deletion
+					return true
+				},
+				CreateFunc: func(e event.CreateEvent) bool {
+					return false
+				},
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					return false
+				},
+				GenericFunc: func(e event.GenericEvent) bool {
+					return false
+				},
+			}),
+		).
 		WithOptions(controller.Options{ // Number of concurrent Reconcils desired
-			MaxConcurrentReconciles: 5,
+			MaxConcurrentReconciles: maxConcurrentReconciles,
 		}).
 		Complete(r)
 }

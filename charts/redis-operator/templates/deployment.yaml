@@ -37,6 +37,11 @@ spec:
           imagePullPolicy: {{ .Values.redisOperator.imagePullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: RECONCILE_INTERVAL
+              value: {{ .Values.redisOperator.reconcileInterval | default "0s" }}
+            - name: MAX_CONCURRENT_RECONCILES
+              value: "{{ .Values.redisOperator.maxConcurrentReconciles | default 5 }}"
           livenessProbe:
             httpGet:
               path: /healthz
