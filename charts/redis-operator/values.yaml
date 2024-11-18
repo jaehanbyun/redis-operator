@@ -5,6 +5,9 @@ redisOperator:
   imageTag: ""
   imagePullSecrets: []
 
+  reconcileInterval: ""
+  maxConcurrentReconciles: 5
+
   replicaCount: 1
 
   service:
@@ -32,16 +35,6 @@ redisOperator:
     requests:
       cpu: 500m
       memory: 500Mi
-
-  # This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
-  # livenessProbe:
-  #   httpGet:
-  #     path: /
-  #     port: http
-  # readinessProbe:
-  #   httpGet:
-  #     path: /
-  #     port: http
 
   nodeSelector: {}
   tolerations: []
