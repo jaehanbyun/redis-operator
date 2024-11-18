@@ -298,16 +298,6 @@ func GetPodNameByNodeID(k8scl kubernetes.Interface, namespace string, nodeID str
 	return podList.Items[0].Name, nil
 }
 
-// containsFlag checks if a target flag exists within a list of flags
-func containsFlag(flags []string, target string) bool {
-	for _, flag := range flags {
-		if flag == target {
-			return true
-		}
-	}
-	return false
-}
-
 // DeleteRedisPod deletes the specified Redis Pod from the cluster
 func DeleteRedisPod(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
 	err := k8scl.CoreV1().Pods(redisCluster.Namespace).Delete(ctx, podName, metav1.DeleteOptions{})
@@ -361,36 +351,32 @@ func GetReplicasToRemoveFromMaster(redisCluster *redisv1beta1.RedisCluster, mast
 }
 
 // WaitForNodeRole waits until the specified node transitions to the expected role (e.g., "slave" or "master")
-func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, nodeID string, expectedRole string, timeout time.Duration) error {
-	startTime := time.Now()
+func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, nodeID string, expectedRole string) error {
+	timeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		elapsed := time.Since(startTime)
-		if elapsed > timeout {
+		select {
+		case <-timeout:
 			return fmt.Errorf("node %s did not transition to role %s", nodeID, expectedRole)
-		}
+		case <-ticker.C:
+			nodesInfo, err := GetClusterNodesInfo(context.TODO(), k8scl, redisCluster, logger)
+			if err != nil {
+				logger.Error(err, "Failed to get cluster node information")
+				continue
+			}
 
-		nodesInfo, err := GetClusterNodesInfo(context.TODO(), k8scl, redisCluster, logger)
-		if err != nil {
-			logger.Error(err, "Failed to get cluster node information")
-			return err
-		}
-
-		for _, node := range nodesInfo {
-			if node.NodeID == nodeID {
-				flagsList := strings.Split(node.Flags, ",")
-				if containsFlag(flagsList, expectedRole) {
-					return nil
+			for _, node := range nodesInfo {
+				if node.NodeID == nodeID {
+					if node.Role == expectedRole {
+						return nil
+					}
+					break
 				}
-				break
 			}
 		}
-		time.Sleep(2 * time.Second)
 	}
-}
-
-// resetFailureCount resets the failure count
-func resetFailureCount(redisCluster *redisv1beta1.RedisCluster, nodeID string) {
-	delete(redisCluster.Status.FailedNodes, nodeID)
 }
 
 // isContainerReady checks if the container is ready
@@ -401,23 +387,6 @@ func isContainerReady(pod *corev1.Pod, containerName string) bool {
 		}
 	}
 	return false
-}
-
-// incrementFailureCount increments the failure count
-func incrementFailureCount(redisCluster *redisv1beta1.RedisCluster, nodeID, podName string, increment int) {
-	failedNode, exists := redisCluster.Status.FailedNodes[nodeID]
-	if !exists {
-		failedNode = redisv1beta1.RedisFailedNodeStatus{
-			RedisNodeStatus: redisv1beta1.RedisNodeStatus{
-				PodName: podName,
-				NodeID:  nodeID,
-			},
-			FailureCount: increment,
-		}
-	} else {
-		failedNode.FailureCount += increment
-	}
-	redisCluster.Status.FailedNodes[nodeID] = failedNode
 }
 
 // IsPodRunning checks if the specified Pod is running and the container is ready
