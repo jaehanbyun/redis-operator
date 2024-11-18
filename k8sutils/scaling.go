@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	"github.com/redis/go-redis/v9"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -48,6 +47,116 @@ func HandleClusterInitialization(ctx context.Context, cl client.Client, k8scl ku
 			return err
 		}
 	}
+	return nil
+}
+
+func HandleFailedNodes(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
+	var existingMaster redisv1beta1.RedisNodeStatus
+	for _, m := range redisCluster.Status.MasterMap {
+		existingMaster = m
+		break
+	}
+
+	existingMasterPort := ExtractPortFromPodName(existingMaster.PodName)
+
+	for _, node := range redisCluster.Status.FailedReplicaMap {
+		logger.Info("Handling failed replica node", "NodeID", node.NodeID)
+
+		cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", existingMasterPort), "cluster", "forget", node.NodeID}
+		output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, cmd)
+		logger.Info("Output of redis-cli cluster forget command", "Output", output)
+		if err != nil {
+			logger.Error(err, "Error forgetting failed node", "Output", output)
+			return err
+		}
+
+		if node.PodName != "" {
+			err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, node.PodName)
+			if err != nil {
+				logger.Error(err, "Error deleting failed replica Pod", "PodName", node.PodName)
+				continue
+			}
+		}
+
+		logger.Info("Failed replica handled successfully", "NodeID", node.NodeID)
+	}
+
+	for _, node := range redisCluster.Status.FailedMasterMap {
+		logger.Info("Handling failed master node", "NodeID", node.NodeID)
+
+		replicas := GetReplicasOfMaster(redisCluster, node.NodeID)
+		if len(replicas) == 0 {
+			cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", existingMasterPort), "cluster", "forget", node.NodeID}
+			output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, cmd)
+			logger.Info("Output of redis-cli cluster forget command", "Output", output)
+			if err != nil {
+				logger.Error(err, "Error forgetting failed node", "Output", output)
+				return err
+			}
+
+			if node.PodName != "" {
+				err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, node.PodName)
+				if err != nil {
+					logger.Error(err, "Error deleting failed replica Pod", "PodName", node.PodName)
+					continue
+				}
+			}
+
+			delete(redisCluster.Status.MasterMap, node.NodeID)
+
+			err = FixCluster(k8scl, redisCluster, logger)
+			if err != nil {
+				logger.Error(err, "Error fixing cluster after failed master with no replicas", "NodeID", node.NodeID)
+				continue
+			}
+
+			logger.Info("Failed master without replicas handled by fixing cluster", "NodeID", node.NodeID)
+		} else {
+			selectedReplica := replicas[0]
+			err := FailoverNode(k8scl, redisCluster, logger, selectedReplica)
+			if err != nil {
+				logger.Error(err, "Failed to perform manual failover", "ReplicaNodeID", selectedReplica.NodeID)
+				continue
+			}
+
+			delete(redisCluster.Status.ReplicaMap, selectedReplica.NodeID)
+
+			for nodeID, replica := range redisCluster.Status.ReplicaMap {
+				if replica.MasterNodeID == node.NodeID {
+					redisCluster.Status.ReplicaMap[nodeID] = redisv1beta1.RedisNodeStatus{
+						PodName:      replica.PodName,
+						NodeID:       replica.NodeID,
+						MasterNodeID: selectedReplica.NodeID,
+					}
+				}
+			}
+
+			cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", existingMasterPort), "cluster", "forget", node.NodeID}
+			output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, cmd)
+			logger.Info("Output of redis-cli cluster forget command", "Output", output)
+			if err != nil {
+				logger.Error(err, "Error forgetting failed node", "Output", output)
+				return err
+			}
+
+			if node.PodName != "" {
+				err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, node.PodName)
+				if err != nil {
+					logger.Error(err, "Error deleting failed replica Pod", "PodName", node.PodName)
+					continue
+				}
+			}
+
+			logger.Info("Failed master handled successfully by promoting replica", "NodeID", node.NodeID)
+		}
+	}
+
+	err := UpdateClusterStatus(ctx, cl, k8scl, redisCluster, logger)
+	if err != nil {
+		logger.Error(err, "Failed to update RedisCluster status after handling failed nodes")
+		return err
+	}
+
 	return nil
 }
 
@@ -519,7 +628,7 @@ func AddReplicaToMaster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.R
 		}
 		logger.Info("Successfully added replica to master", "Replica", replica.PodName, "Master", master.PodName)
 
-		err = WaitForNodeRole(k8scl, redisCluster, logger, replica.NodeID, "slave", 30*time.Second)
+		err = WaitForNodeRole(k8scl, redisCluster, logger, replica.NodeID, "slave")
 		if err != nil {
 			logger.Error(err, "Node did not transition to replica role", "NodeID", replica.NodeID)
 			return err
@@ -606,48 +715,25 @@ func FixCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisClus
 	return nil
 }
 
-// handleFailedNode handels the failed node
-func handleFailedNode(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, failedNodes map[string]redisv1beta1.RedisFailedNodeStatus) error {
-	var existingMaster redisv1beta1.RedisNodeStatus
-	for _, master := range redisCluster.Status.MasterMap {
-		existingMaster = master
-		break
+func FailoverNode(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, replica redisv1beta1.RedisNodeStatus) error {
+	replicaPodName := replica.PodName
+	port := ExtractPortFromPodName(replicaPodName)
+	cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", port), "cluster", "failover", "force"}
+	logger.Info("Performing manual failover", "ReplicaPod", replicaPodName, "Command", strings.Join(cmd, " "))
+
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, replicaPodName, cmd)
+	if err != nil {
+		logger.Error(err, "Error performing manual failover", "Output", output)
+		return err
 	}
+	logger.Info("Manual failover command output", "Output", output)
 
-	existingMasterPort := ExtractPortFromPodName(existingMaster.PodName)
-
-	for _, node := range failedNodes {
-		cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", existingMasterPort), "cluster", "forget", node.NodeID}
-		output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, cmd)
-		logger.Info("Output of redis-cli cluster forget command", "Output", output)
-		if err != nil {
-			logger.Error(err, "Error forgetting failed node", "Output", output)
-			return err
-		}
-
-		err = cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: node.PodName}, &corev1.Pod{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				podName, err := GetPodNameByNodeID(k8scl, redisCluster.Namespace, node.NodeID, logger)
-				if err != nil {
-					logger.Error(err, "Failed to get Pod name by NodeID", "NodeID", node.NodeID)
-					continue
-				}
-				err = DeleteRedisPod(ctx, k8scl, redisCluster, logger, podName)
-				if err != nil {
-					logger.Error(err, "Error deleting failed node Pod", "PodName", podName)
-					return fmt.Errorf("failed to delete pod %s: %v", podName, err)
-				}
-				logger.Info("Successfully deleted failed node Pod", "PodName", podName)
-			}
-		}
-		resetFailureCount(redisCluster, node.NodeID)
-	}
-
-	if err := FixCluster(k8scl, redisCluster, logger); err != nil {
-		logger.Error(err, "Error during cluster fixing", "output", err)
+	err = WaitForNodeRole(k8scl, redisCluster, logger, replica.NodeID, "master")
+	if err != nil {
+		logger.Error(err, "Replica did not become master after failover", "NodeID", replica.NodeID)
 		return err
 	}
 
+	logger.Info("Replica has been promoted to master", "NodeID", replica.NodeID)
 	return nil
 }

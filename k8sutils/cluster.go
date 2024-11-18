@@ -10,44 +10,50 @@ import (
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	FailureThreshold = 5
-)
-
 type ClusterNodeInfo struct {
 	NodeID       string
 	PodName      string
-	Flags        string
+	Role         string
+	Up           bool
 	MasterNodeID string
 }
 
 // GetClusterNodesInfo returns information about all nodes in a Cluster by executing "cluster nodes" command via redis-cli
 func GetClusterNodesInfo(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) ([]ClusterNodeInfo, error) {
-	var masterPodName string
-	for _, master := range redisCluster.Status.MasterMap {
-		isRunning, err := IsPodRunning(ctx, k8scl, redisCluster.Namespace, master.PodName, "redis", logger)
+	podList, err := k8scl.CoreV1().Pods(redisCluster.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name),
+	})
+	if err != nil {
+		logger.Error(err, "Failed to list Pods")
+		return nil, err
+	}
+
+	var redisPodName string
+	for _, pod := range podList.Items {
+		isRunning, err := IsPodRunning(ctx, k8scl, redisCluster.Namespace, pod.Name, "redis", logger)
 		if err != nil {
-			logger.Error(err, "Error checking if Pod is running", "PodName", master.PodName)
+			logger.Error(err, "Error checking if Pod is running", "PodName", pod.Name)
 			continue
 		}
 		if isRunning {
-			masterPodName = master.PodName
+			redisPodName = pod.Name
 			break
 		}
 	}
-	if masterPodName == "" {
-		logger.Info("No master nodes in the cluster")
+	if redisPodName == "" {
+		logger.Info("No running Pods found in the cluster")
 		return []ClusterNodeInfo{}, nil
 	}
 
-	port := ExtractPortFromPodName(masterPodName)
+	port := ExtractPortFromPodName(redisPodName)
 	cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", port), "cluster", "nodes"}
-	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, masterPodName, cmd)
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, redisPodName, cmd)
 	if err != nil {
 		logger.Error(err, "Error executing Redis CLI command", "Command", strings.Join(cmd, " "))
 		return nil, err
@@ -63,22 +69,27 @@ func GetClusterNodesInfo(ctx context.Context, k8scl kubernetes.Interface, redisC
 		}
 		parts := strings.Split(line, " ")
 		nodeID := parts[0]
-		flags := parts[2]
 		masterNodeID := ""
+		role := ""
+		up := true
 		if len(parts) > 3 && parts[3] != "-" {
 			masterNodeID = parts[3]
 		}
-
-		podName, err := GetPodNameByNodeID(k8scl, redisCluster.Namespace, nodeID, logger)
-		if err != nil {
-			logger.Error(err, "Failed to find Pod by NodeID", "NodeID", nodeID)
+		if strings.Contains(line, "master") {
+			role = "master"
+		} else {
+			role = "slave"
 		}
-
+		if strings.Contains(line, "fail") || strings.Contains(line, "disconnected") {
+			up = false
+		}
+		podName, _ := GetPodNameByNodeID(k8scl, redisCluster.Namespace, nodeID, logger)
 		nodesInfo = append(nodesInfo, ClusterNodeInfo{
 			NodeID:       nodeID,
 			PodName:      podName,
-			Flags:        flags,
+			Role:         role,
 			MasterNodeID: masterNodeID,
+			Up:           up,
 		})
 	}
 
@@ -137,18 +148,7 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 		return err
 	}
 
-	if redisCluster.Status.NextAvailablePort == 0 {
-		redisCluster.Status.NextAvailablePort = redisCluster.Spec.BasePort
-	}
-	if redisCluster.Status.MasterMap == nil {
-		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
-	}
-	if redisCluster.Status.ReplicaMap == nil {
-		redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
-	}
-	if redisCluster.Status.FailedNodes == nil {
-		redisCluster.Status.FailedNodes = make(map[string]redisv1beta1.RedisFailedNodeStatus)
-	}
+	initializeStatusMaps(redisCluster)
 
 	podList, err := k8scl.CoreV1().Pods(redisCluster.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("clusterName=%s", redisCluster.Name)})
@@ -165,73 +165,38 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 
 	currentMasters := make(map[string]redisv1beta1.RedisNodeStatus)
 	currentReplicas := make(map[string]redisv1beta1.RedisNodeStatus)
+	currentMasterFailedMap := make(map[string]redisv1beta1.RedisNodeStatus)
+	currentReplicaFailedMap := make(map[string]redisv1beta1.RedisNodeStatus)
 
 	if len(nodesInfo) == 0 {
 		logger.Info("No cluster node information found. Assuming initial state")
 	} else {
 		for _, node := range nodesInfo {
-			flagsList := strings.Split(node.Flags, ",")
-
-			pod := existingPods[node.PodName]
-
-			if pod.Status.Phase != corev1.PodRunning || !isContainerReady(pod, "redis") {
-				incrementFailureCount(redisCluster, node.NodeID, node.PodName, 2)
-				continue
-			}
-
-			if containsFlag(flagsList, "fail") || containsFlag(flagsList, "disconnected") {
-				incrementFailureCount(redisCluster, node.NodeID, node.PodName, 1)
-			} else {
-				resetFailureCount(redisCluster, node.NodeID)
-			}
-
-			failureCount := redisCluster.Status.FailedNodes[node.NodeID].FailureCount
-			if failureCount < 5 {
-				if containsFlag(flagsList, "master") {
-					currentMasters[node.NodeID] = redisv1beta1.RedisNodeStatus{
-						PodName: node.PodName,
-						NodeID:  node.NodeID,
+			if !node.Up {
+				if node.Role == "master" {
+					currentMasterFailedMap[node.NodeID] = redisv1beta1.RedisNodeStatus{
+						NodeID: node.NodeID,
 					}
-				} else if containsFlag(flagsList, "slave") {
-					currentReplicas[node.NodeID] = redisv1beta1.RedisNodeStatus{
-						PodName:      node.PodName,
+				} else {
+					currentReplicaFailedMap[node.NodeID] = redisv1beta1.RedisNodeStatus{
 						NodeID:       node.NodeID,
 						MasterNodeID: node.MasterNodeID,
 					}
 				}
+			} else {
+				updateNodeStatus(currentMasters, currentReplicas, node)
 			}
 		}
 	}
 
 	redisCluster.Status.MasterMap = currentMasters
 	redisCluster.Status.ReplicaMap = currentReplicas
+	redisCluster.Status.FailedMasterMap = currentMasterFailedMap
+	redisCluster.Status.FailedReplicaMap = currentReplicaFailedMap
 
-	logger.Info("Current MasterMap", "MasterMap", redisCluster.Status.MasterMap)
-	logger.Info("Current ReplicaMap", "ReplicaMap", redisCluster.Status.ReplicaMap)
-	logger.Info("Current FailedNodes", "FailedNodes", redisCluster.Status.FailedNodes)
+	logClusterStatus(logger, redisCluster)
 
-	failedNodes := make(map[string]redisv1beta1.RedisFailedNodeStatus)
-	for _, node := range redisCluster.Status.FailedNodes {
-		if node.FailureCount >= FailureThreshold {
-			logger.Info("Handling permanently failed node", "NodeID", node.NodeID)
-			failedNodes[node.NodeID] = node
-		}
-	}
-
-	if len(failedNodes) > FailureThreshold {
-		err = handleFailedNode(ctx, cl, k8scl, redisCluster, logger, failedNodes)
-		if err != nil {
-			logger.Error(err, "Failed to handle failed node")
-			return err
-		}
-	}
-
-	if err := cl.Status().Update(ctx, redisCluster); err != nil {
-		logger.Error(err, "Error updating RedisCluster status")
-		return err
-	}
-
-	return nil
+	return updateClusterStatusWithRetry(ctx, cl, redisCluster)
 }
 
 // WaitForClusterStabilization checks if all Redis cluster nodes agree on the configuration
@@ -319,4 +284,74 @@ func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kuberne
 	}
 
 	return nil
+}
+
+func initializeStatusMaps(redisCluster *redisv1beta1.RedisCluster) {
+	if redisCluster.Status.NextAvailablePort == 0 {
+		redisCluster.Status.NextAvailablePort = redisCluster.Spec.BasePort
+	}
+	if redisCluster.Status.MasterMap == nil {
+		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	}
+	if redisCluster.Status.ReplicaMap == nil {
+		redisCluster.Status.ReplicaMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	}
+	if redisCluster.Status.FailedMasterMap == nil {
+		redisCluster.Status.FailedMasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	}
+	if redisCluster.Status.FailedMasterMap == nil {
+		redisCluster.Status.FailedMasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
+	}
+}
+
+func updateNodeStatus(currentMasters, currentReplicas map[string]redisv1beta1.RedisNodeStatus, node ClusterNodeInfo) {
+	if node.Role == "master" {
+		currentMasters[node.NodeID] = redisv1beta1.RedisNodeStatus{
+			PodName: node.PodName,
+			NodeID:  node.NodeID,
+		}
+	} else if node.Role == "slave" {
+		currentReplicas[node.NodeID] = redisv1beta1.RedisNodeStatus{
+			PodName:      node.PodName,
+			NodeID:       node.NodeID,
+			MasterNodeID: node.MasterNodeID,
+		}
+	}
+}
+
+func GetReplicasOfMaster(redisCluster *redisv1beta1.RedisCluster, masterNodeID string) []redisv1beta1.RedisNodeStatus {
+	replicas := []redisv1beta1.RedisNodeStatus{}
+	for _, replica := range redisCluster.Status.ReplicaMap {
+		if replica.MasterNodeID == masterNodeID {
+			replicas = append(replicas, replica)
+		}
+	}
+	return replicas
+}
+
+func updateClusterStatusWithRetry(ctx context.Context, cl client.Client, redisCluster *redisv1beta1.RedisCluster) error {
+	currentVersion := redisCluster.ResourceVersion
+
+	if err := cl.Status().Update(ctx, redisCluster); err != nil {
+		if errors.IsConflict(err) {
+			updatedRedisCluster := &redisv1beta1.RedisCluster{}
+			if err := cl.Get(ctx, client.ObjectKeyFromObject(redisCluster), updatedRedisCluster); err != nil {
+				return err
+			}
+			if updatedRedisCluster.ResourceVersion != currentVersion {
+				updatedRedisCluster.Status = redisCluster.Status
+				return cl.Status().Update(ctx, updatedRedisCluster)
+			}
+		}
+		return err
+	}
+
+	return nil
+}
+
+func logClusterStatus(logger logr.Logger, redisCluster *redisv1beta1.RedisCluster) {
+	logger.Info("Current MasterMap", "MasterMap", redisCluster.Status.MasterMap)
+	logger.Info("Current ReplicaMap", "ReplicaMap", redisCluster.Status.ReplicaMap)
+	logger.Info("Current FailedNodes", "FailedMasterNodes", redisCluster.Status.FailedMasterMap)
+	logger.Info("Current FailedNodes", "FailedReplicaNodes", redisCluster.Status.FailedReplicaMap)
 }

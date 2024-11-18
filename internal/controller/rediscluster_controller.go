@@ -101,6 +101,11 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: reconcileInterval}, nil
 	}
 
+	// Handle node failure
+	if err := k8sutils.HandleFailedNodes(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Handle cluster initialization
 	if err := k8sutils.HandleClusterInitialization(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 		return ctrl.Result{}, err

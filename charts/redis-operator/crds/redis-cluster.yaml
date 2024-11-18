@@ -24,7 +24,7 @@ spec:
           name: REPLICAS
           type: integer
         - description: Maximum memory for Redis nodes
-          jsonPath: .spec.maxmemory
+          jsonPath: .spec.maxMemory
           name: MAXMEMORY
           type: string
         - description: Base port for Redis nodes
@@ -184,11 +184,23 @@ spec:
             status:
               description: RedisClusterStatus defines the observed state of RedisCluster
               properties:
-                failedNodes:
+                failedMasterMap:
                   additionalProperties:
                     properties:
-                      failureCount:
-                        type: integer
+                      masterNodeID:
+                        type: string
+                      nodeID:
+                        type: string
+                      podName:
+                        type: string
+                    required:
+                      - nodeID
+                      - podName
+                    type: object
+                  type: object
+                failedReplicaMap:
+                  additionalProperties:
+                    properties:
                       masterNodeID:
                         type: string
                       nodeID:
