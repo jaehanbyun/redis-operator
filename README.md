@@ -27,21 +27,21 @@ spec:
   masters: 3
   replicas: 1
   basePort: 10000
-  maxMemory: 500mb
+  maxMemory: 512mb
   resources:
     limits:
-      cpu: 500m
-      memory: 500Mi
+      cpu: 1
+      memory: 1000Mi
     requests:
-      cpu: 100m
-      memory: 100Mi
+      cpu: 1
+      memory: 1000Mi
   exporterResources:
     limits:
-      cpu: 100m
-      memory: 100Mi
+      cpu: 200m
+      memory: 128Mi
     requests:
-      cpu: 100m
-      memory: 100Mi
+      cpu: 50m
+      memory: 64Mi
 ```
 
 | Parameter | Description | 
@@ -73,4 +73,8 @@ redis-operator가 helm으로 배포되고 나면, <a href="crd">Redis Cluster CR
 또한, 기본적으로, Helm 배포 시 Prometheus와 Grafana를 Sub Chart로 Enable되어 operator와 함께 배포됩니다.
 
 ## Demo Video
+
+
+https://github.com/user-attachments/assets/5b1c55cf-b88d-4eb5-bfd3-a2edefd0d710
+
 
