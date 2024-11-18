@@ -3,7 +3,7 @@ entries:
   redis-operator:
   - apiVersion: v2
     appVersion: 0.1.1
-    created: "2024-11-18T14:08:14.616445023Z"
+    created: "2024-11-18T15:01:07.147553765Z"
     dependencies:
     - condition: prometheus.enabled
       name: prometheus
@@ -14,7 +14,7 @@ entries:
       repository: https://grafana.github.io/helm-charts
       version: 8.5.*
     description: A Helm chart for redis operator
-    digest: e4280034a4d0b4f40aefb2d912d9ba83575ad4b40098aa826186507eb5ac322f
+    digest: bff4c19d1cfb32a7ecc4bc2d4be85a90563f1f9d0c594bb91e2b6c1a9c35bf45
     home: https://github.com/jaehanbyun/redis-operator
     icon: https://github.com/jaehanbyun/redis-operator/raw/main/assets/redis-operator-logo.svg
     keywords:
@@ -28,4 +28,4 @@ entries:
     urls:
     - https://jaehanbyun.github.io/redis-operator/redis-operator-0.1.0.tgz
     version: 0.1.0
-generated: "2024-11-18T14:08:14.606262478Z"
+generated: "2024-11-18T15:01:07.13672097Z"
