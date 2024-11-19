@@ -13,7 +13,7 @@ redis-operator는 Redis Cluster의 생성, 삭제, 확장/축소, 모니터링�
 
 ![works](assets/works-img.png)
 
-### <a name="crd">Redis Cluster CRD</a>
+### <p name="crd">Redis Cluster CRD</p>
 
 Redis Cluster의 CRD의 Parameter는 아래와 같이 구성되어 있습니다.
 ```yaml
@@ -54,7 +54,51 @@ spec:
 | resources | Redis Node Container의 리소스 설정 | 
 | exporterResources | Redis Node Exporter Container의 리소스 설정 | 
 
+### How to Access Redis Node
 
+Redis Cluster를 구성하고 있는 Redis Node의 주소는 다음과 같이 operator에 HTTP API방식의 요청을 통해
+제공받을 수 있습니다.
+
+![access](assets/access-node.png)
+
+**Request**
+
+Redis Node의 주소를 얻기 위해서는 다음과 같이 HTTP GET 요청을 보내야 합니다.
+
+- Kubernets 내부
+
+  ```
+  GET http://redis-operator-service:9090/cluster/nodes?clusterName={clusterName}
+  ```
+- Kubernetes 외부
+
+  values.yaml의 redisOperator.service.type을 NodePort, LoadBalancer로 설정하거나, PortForwarding
+  ```yaml
+  service:
+      type: NodePort
+  ```
+  ```
+  GET http://<service-address>/cluster/nodes?clusterName={clusterName}
+  ```
+**Response**
+
+요청에 대한 응답은 다음과 같습니다.
+```json
+[
+    {
+        "ip": "10.10.80.94",
+        "port": 10000
+    },
+    {
+        "ip": "10.10.96.153",
+        "port": 10002
+    },
+    {
+        "ip": "10.10.80.94",
+        "port": 10001
+    }
+]
+```
 ## Getting Started
 
 ```bash
@@ -68,7 +112,7 @@ $ helm upgrade redis-operator operator/redis-operator \
   --install --create-namespace --namespace <your_namespace> 
 ```
 
-redis-operator가 helm으로 배포되고 나면, <a href="crd">Redis Cluster CRD</a>의 yaml 형식의 manifest 파일을 사용하여 Redis Cluster를 배포할 수 있습니다.
+redis-operator가 helm으로 배포되고 나면, <a href="#crd">Redis Cluster CRD</a>의 형식을 따라서 manifests를 만들어 Redis Cluster를 배포할 수 있습니다.
 
 또한, 기본적으로, Helm 배포 시 Prometheus와 Grafana를 Sub Chart로 Enable되어 operator와 함께 배포됩니다.
 
