@@ -23,10 +23,9 @@ redis-operator는 Redis Cluster의 생성, 삭제, 확장/축소, 모니터링�
 ![requests](assets/requests_per_seconde.png)
 
 
-
 ### <p name="crd">Redis Cluster CRD</p>
 
-Redis Cluster의 CRD의 Parameter는 아래와 같이 구성되어 있습니다.
+Redis Cluster의 CRD의 Field는 아래와 같이 구성되어 있습니다.
 ```yaml
 apiVersion: redis.redis/v1beta1
 kind: RedisCluster
