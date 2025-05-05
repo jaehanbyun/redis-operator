@@ -2,7 +2,7 @@ redisOperator:
   name: redis-operator
   imageName: awbrg789/redis-operator
   imagePullPolicy: Always
-  imageTag: "change-crd"
+  imageTag: ""
   imagePullSecrets: []
 
   reconcileInterval: ""
