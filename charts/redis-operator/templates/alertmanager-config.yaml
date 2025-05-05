@@ -1,0 +1,30 @@
+{{- if and .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-alertmanager-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}
+    release: {{ .Release.Name }}
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['alertname', 'redis_cluster']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: 'redis-operator'
+      routes:
+      - match:
+          severity: 'warning'
+          component: 'redis'
+        receiver: 'redis-operator'
+    receivers:
+    - name: 'redis-operator'
+      webhook_configs:
+      - url: 'http://{{ .Values.redisOperator.name }}:9090/webhooks/alertmanager'
+        send_resolved: false
+{{- end }}

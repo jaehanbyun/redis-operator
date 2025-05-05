@@ -2,11 +2,34 @@ redisOperator:
   name: redis-operator
   imageName: awbrg789/redis-operator
   imagePullPolicy: Always
-  imageTag: ""
+  imageTag: "change-crd"
   imagePullSecrets: []
 
   reconcileInterval: ""
   maxConcurrentReconciles: 5
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 10s
+    prometheusRule:
+      enabled: true
+      rules:
+        memoryThreshold: 0.8
+        throughputThreshold: 1000
+        clientConnectionsThreshold: 100
+        latencyThreshold: 0.1
+      autoScaling:
+        enabled: true
+        highMemoryThreshold: 0.8
+        lowMemoryThreshold: 0.3
+        highThroughputThreshold: 1000
+        lowThroughputThreshold: 100
+        scaleUpCount: 1
+        scaleDownCount: 1
+        scaleUpCooldown: 5m
+        scaleDownCooldown: 15m
 
   replicaCount: 1
 
@@ -40,27 +63,59 @@ redisOperator:
   tolerations: []
   affinity: {}
 
-## Using default values from https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus/values.yaml
-##
+redisCluster:
+  name: ""
+  image: quay.io/opstree/redis
+  tag: v7.0.15
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: {}
+  
+  masters: 3
+  replicas: 1
+  maxMemory: "1gb"
+  basePort: 10000
+  
+  resources: {}
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+  
+  # persistence:
+  #   enabled: true
+  #   storageClass: ""
+  #   size: 1Gi
+  
+  securityContext: {}
+    # runAsUser: 1000
+    # runAsGroup: 1000
+    # fsGroup: 1000
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  exporter:
+    enabled: true
+    image: quay.io/opstree/redis-exporter
+    tag: v1.44.0
+    resources: {}
+      # requests:
+      #   cpu: 100m
+      #   memory: 128Mi
+      # limits:
+      #   cpu: 100m
+      #   memory: 128Mi
+
 prometheus:
   enabled: true
-
-  prometheus-node-exporter:
-    enabled: false
-
-  prometheus-pushgateway:
-    enabled: false
-
-  kube-state-metrics:
-    enabled: false
-
   server:
     global:
       scrape_interval: 5s
       scrape_timeout: 5s
       evaluation_interval: 30s
-
-  alertmanager: {}
 
 ## Using default values from https://github.com/grafana/helm-charts/blob/main/charts/grafana/values.yaml
 ##
