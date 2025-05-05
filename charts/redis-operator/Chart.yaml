@@ -1,24 +1,24 @@
 apiVersion: v2
 name: redis-operator
-description: A Helm chart for redis operator
-home: https://github.com/jaehanbyun/redis-operator
-sources:
-  - https://github.com/jaehanbyun/redis-operator
-keywords:
-  - kubernetes
-  - operator
-  - redis
+description: A Helm chart for Redis Operator
 type: application
-version: 0.1.0
-appVersion: "0.1.1"
-icon: https://github.com/jaehanbyun/redis-operator/raw/main/assets/redis-operator-logo.svg
-
+version: 0.1.2
+appVersion: "0.1.2"
+maintainers:
+  - name: jaehanbyun
+    email: awbrg789@naver.com
+keywords:
+  - redis
+  - operator
+  - kubernetes
+  - prometheus
+  - metrics
+  - autoscaling
+annotations:
+  category: Database
+  description: Redis Operator with Prometheus metrics and autoscaling support
 dependencies:
-  - name: prometheus
-    version: "25.29.*"
-    repository: https://prometheus-community.github.io/helm-charts
-    condition: prometheus.enabled
   - name: grafana
-    version: "8.5.*"
-    repository: https://grafana.github.io/helm-charts
+    version: "6.56.5"
+    repository: "https://grafana.github.io/helm-charts"
     condition: grafana.enabled
