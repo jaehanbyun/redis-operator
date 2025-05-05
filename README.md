@@ -134,10 +134,6 @@ redis-operator가 helm으로 배포되고 나면, <a href="#crd">Redis Cluster C
 
 또한, 기본적으로, Helm 배포 시 Prometheus와 Grafana를 Sub Chart로 Enable되어 operator와 함께 배포됩니다.
 
-## Demo Video
-
-https://github.com/user-attachments/assets/5b1c55cf-b88d-4eb5-bfd3-a2edefd0d710
-
 ## Auto Scaling
 
 redis-operator는 Prometheus와 Alertmanager를 통한 자동 스케일링 기능을 제공합니다. 메트릭 기반으로 Redis 클러스터를 자동으로 확장하거나 축소할 수 있어 리소스를 효율적으로 관리할 수 있습니다.
@@ -175,5 +171,11 @@ redisOperator:
         memoryThreshold: 0.8
         throughputThreshold: 1000
 ```
+
+## Demo Video
+
+https://github.com/user-attachments/assets/5b1c55cf-b88d-4eb5-bfd3-a2edefd0d710
+
+
 
 ## License
