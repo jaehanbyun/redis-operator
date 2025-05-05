@@ -10,7 +10,7 @@ spec:
   selector:
     matchLabels:
       {{- include "redisOperator.selectorLabels" . | nindent 6 }}
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.redisOperator.replicaCount }}
   template:
     metadata:
       annotations:
@@ -26,7 +26,7 @@ spec:
         {{- toYaml .Values.redisOperator.imagePullSecrets | nindent 8 }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.redisOperator.podSecurityContext | nindent 8 }}
       containers:
         - command:
             - /manager
@@ -36,7 +36,7 @@ spec:
           name: {{ .Values.redisOperator.name }}
           imagePullPolicy: {{ .Values.redisOperator.imagePullPolicy }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- toYaml .Values.redisOperator.securityContext | nindent 12 }}
           env:
             - name: RECONCILE_INTERVAL
               value: {{ .Values.redisOperator.reconcileInterval | default "0s" }}
@@ -54,19 +54,19 @@ spec:
               port: 8081
             initialDelaySeconds: 5
             periodSeconds: 10
-          {{- if .Values.resources }}
+          {{- if .Values.redisOperator.resources }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.redisOperator.resources | nindent 12 }}
           {{- end }}
-      {{- with .Values.nodeSelector }}
+      {{- with .Values.redisOperator.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- with .Values.redisOperator.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- with .Values.redisOperator.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
