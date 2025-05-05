@@ -1,0 +1,57 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-alertmanager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-alertmanager
+    release: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-alertmanager
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-alertmanager
+    spec:
+      containers:
+      - name: alertmanager
+        image: quay.io/prometheus/alertmanager:v0.25.0
+        ports:
+        - name: web
+          containerPort: 9093
+        args:
+        - "--config.file=/etc/alertmanager/alertmanager.yml"
+        - "--storage.path=/alertmanager"
+        - "--web.external-url=http://{{ .Release.Name }}-alertmanager:9093/"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/alertmanager
+        - name: storage-volume
+          mountPath: /alertmanager
+      volumes:
+      - name: config-volume
+        configMap:
+          name: redis-cluster-alertmanager-config
+      - name: storage-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-alertmanager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-alertmanager
+    release: {{ .Release.Name }}
+spec:
+  ports:
+  - name: web
+    port: 9093
+    targetPort: web
+  selector:
+    app: {{ .Release.Name }}-alertmanager
+{{- end }} 

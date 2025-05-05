@@ -1,0 +1,110 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}
+    release: {{ .Release.Name }}
+data:
+  redis-alerts.yaml: |
+    groups:
+      - name: redis-cluster-alerts
+        rules:
+          - alert: HighMemoryUsage
+            expr: avg by (clusterName) (redis_memory_used_bytes / redis_memory_max_bytes) > {{ .Values.redisOperator.metrics.prometheusRule.rules.memoryThreshold }}
+            for: 5m
+            labels:
+              severity: warning
+              cluster: "{{ .Release.Name }}"
+            annotations:
+              summary: High memory usage in Redis cluster
+              description: Memory usage is above {{ mul .Values.redisOperator.metrics.prometheusRule.rules.memoryThreshold 100 }}% for 5 minutes in cluster {{ .Release.Name }}
+
+          - alert: HighThroughput
+            expr: avg by (clusterName) (rate(redis_commands_processed_total[5m])) > {{ .Values.redisOperator.metrics.prometheusRule.rules.throughputThreshold }}
+            for: 5m
+            labels:
+              severity: warning
+              cluster: "{{ .Release.Name }}"
+            annotations:
+              summary: High command throughput in Redis cluster
+              description: Command throughput is above {{ .Values.redisOperator.metrics.prometheusRule.rules.throughputThreshold }} per second for 5 minutes in cluster {{ .Release.Name }}
+
+          - alert: HighClientConnections
+            expr: avg by (clusterName) (redis_connected_clients) > {{ .Values.redisOperator.metrics.prometheusRule.rules.clientConnectionsThreshold }}
+            for: 5m
+            labels:
+              severity: warning
+              cluster: "{{ .Release.Name }}"
+            annotations:
+              summary: High number of client connections
+              description: Number of connected clients is above {{ .Values.redisOperator.metrics.prometheusRule.rules.clientConnectionsThreshold }} for 5 minutes in cluster {{ .Release.Name }}
+
+          - alert: HighLatency
+            expr: avg by (clusterName) (redis_latency_seconds) > {{ .Values.redisOperator.metrics.prometheusRule.rules.latencyThreshold }}
+            for: 5m
+            labels:
+              severity: warning
+              cluster: "{{ .Release.Name }}"
+            annotations:
+              summary: High latency in Redis cluster
+              description: Latency is above {{ mul .Values.redisOperator.metrics.prometheusRule.rules.latencyThreshold 1000 }}ms for 5 minutes in cluster {{ .Release.Name }}
+      
+      {{- if .Values.redisOperator.metrics.prometheusRule.autoScaling.enabled }}
+      - name: redis-autoscaling
+        rules:
+          - alert: RedisHighMemoryUsage
+            expr: avg by (clusterName) (redis_memory_used_bytes{clusterName="{{ .Values.redisCluster.name | default .Release.Name }}"} / redis_memory_max_bytes{clusterName="{{ .Values.redisCluster.name | default .Release.Name }}"}) > {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.highMemoryThreshold }}
+            for: {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleUpCooldown }}
+            labels:
+              severity: warning
+              component: redis
+              redis_cluster: "{{ .Values.redisCluster.name | default .Release.Name }}"
+              alertname: HighMemoryUsage
+            annotations:
+              summary: "Redis 메모리 사용량이 높습니다"
+              description: "Redis 클러스터의 메모리 사용량이 {{ mul .Values.redisOperator.metrics.prometheusRule.autoScaling.highMemoryThreshold 100 }}%를 초과했습니다"
+              scale_count: "{{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleUpCount }}"
+
+          - alert: RedisHighThroughput
+            expr: avg by (clusterName) (rate(redis_commands_processed_total{clusterName="{{ .Values.redisCluster.name | default .Release.Name }}"}[5m])) > {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.highThroughputThreshold }}
+            for: {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleUpCooldown }}
+            labels:
+              severity: warning
+              component: redis
+              redis_cluster: "{{ .Values.redisCluster.name | default .Release.Name }}"
+              alertname: HighThroughput
+            annotations:
+              summary: "Redis 처리량이 높습니다"
+              description: "Redis 클러스터의 처리량이 {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.highThroughputThreshold }} ops/s를 초과했습니다"
+              scale_count: "{{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleUpCount }}"
+
+          - alert: RedisLowMemoryUsage
+            expr: avg by (clusterName) (redis_memory_used_bytes{clusterName="{{ .Values.redisCluster.name | default .Release.Name }}"} / redis_memory_max_bytes{clusterName="{{ .Values.redisCluster.name | default .Release.Name }}"}) < {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.lowMemoryThreshold }}
+            for: {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleDownCooldown }}
+            labels:
+              severity: warning
+              component: redis
+              redis_cluster: "{{ .Values.redisCluster.name | default .Release.Name }}"
+              alertname: LowMemoryUsage
+            annotations:
+              summary: "Redis 메모리 사용량이 낮습니다"
+              description: "Redis 클러스터의 메모리 사용량이 {{ mul .Values.redisOperator.metrics.prometheusRule.autoScaling.lowMemoryThreshold 100 }}% 미만입니다"
+              scale_count: "{{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleDownCount }}"
+
+          - alert: RedisLowThroughput
+            expr: avg by (clusterName) (rate(redis_commands_processed_total{clusterName="{{ .Values.redisCluster.name | default .Release.Name }}"}[15m])) < {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.lowThroughputThreshold }}
+            for: {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleDownCooldown }}
+            labels:
+              severity: warning
+              component: redis
+              redis_cluster: "{{ .Values.redisCluster.name | default .Release.Name }}"
+              alertname: LowThroughput
+            annotations:
+              summary: "Redis 처리량이 낮습니다"
+              description: "Redis 클러스터의 처리량이 {{ .Values.redisOperator.metrics.prometheusRule.autoScaling.lowThroughputThreshold }} ops/s 미만입니다"
+              scale_count: "{{ .Values.redisOperator.metrics.prometheusRule.autoScaling.scaleDownCount }}"
+      {{- end }}
+{{- end }}
