@@ -160,6 +160,20 @@ func main() {
 		}
 	}()
 
+	setupLog.Info("HTTP server started on port 9090")
+	setupLog.Info("Available endpoints:")
+	setupLog.Info("- GET /cluster/nodes: Get Redis cluster nodes information")
+	setupLog.Info("- POST /webhooks/alertmanager: Receive Alertmanager alerts for auto-scaling Redis clusters")
+	setupLog.Info("For auto-scaling, Alertmanager should send alerts with the following labels:")
+	setupLog.Info("  - redis_cluster: Name of the Redis cluster")
+	setupLog.Info("  - namespace: Namespace of the Redis cluster (optional, default: 'default')")
+	setupLog.Info("  - alertname: Alert name that indicates the scaling action")
+	setupLog.Info("    * HighMemoryUsage: Scale up masters")
+	setupLog.Info("    * HighThroughput: Scale up replicas")
+	setupLog.Info("    * LowMemoryUsage: Scale down masters")
+	setupLog.Info("    * LowThroughput: Scale down replicas")
+	setupLog.Info("  - scale_count: Number of nodes to scale (optional annotation, default: 1)")
+
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
