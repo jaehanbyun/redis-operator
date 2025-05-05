@@ -1,0 +1,57 @@
+apiVersion: redis.redis/v1beta1
+kind: RedisCluster
+metadata:
+  name: {{ .Values.redisCluster.name | default .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "redisOperator.labels" . | nindent 4 }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  # Helm 삭제 시 이 CR도 함께 삭제되도록 설정
+  {{- $deployment := lookup "apps/v1" "Deployment" .Release.Namespace .Values.redisOperator.name }}
+  {{- if $deployment }}
+  ownerReferences:
+  - apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.redisOperator.name }}
+    uid: {{ $deployment.metadata.uid }}
+    {{- end }}
+spec:
+  image: {{ .Values.redisCluster.image }}:{{ .Values.redisCluster.tag }}
+  imagePullPolicy: {{ .Values.redisCluster.imagePullPolicy }}
+  {{- if .Values.redisCluster.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml .Values.redisCluster.imagePullSecrets | nindent 4 }}
+  {{- end }}
+  masters: {{ .Values.redisCluster.masters }}
+  replicas: {{ .Values.redisCluster.replicas }}
+  maxMemory: {{ .Values.redisCluster.maxMemory }}
+  basePort: {{ .Values.redisCluster.basePort }}
+  {{- if .Values.redisCluster.resources }}
+  resources:
+    {{- toYaml .Values.redisCluster.resources | nindent 4 }}
+  {{- end }}
+  {{- if .Values.redisCluster.securityContext }}
+  securityContext:
+    {{- toYaml .Values.redisCluster.securityContext | nindent 4 }}
+  {{- end }}
+  {{- if .Values.redisCluster.nodeSelector }}
+  nodeSelector:
+    {{- toYaml .Values.redisCluster.nodeSelector | nindent 4 }}
+  {{- end }}
+  {{- if .Values.redisCluster.tolerations }}
+  tolerations:
+    {{- toYaml .Values.redisCluster.tolerations | nindent 4 }}
+  {{- end }}
+  {{- if .Values.redisCluster.affinity }}
+  affinity:
+    {{- toYaml .Values.redisCluster.affinity | nindent 4 }}
+  {{- end }}
+  exporter:
+    enabled: {{ .Values.redisCluster.exporter.enabled }}
+    image: {{ .Values.redisCluster.exporter.image }}:{{ .Values.redisCluster.exporter.tag }}
+    {{- if .Values.redisCluster.exporter.resources }}
+    resources:
+      {{- toYaml .Values.redisCluster.exporter.resources | nindent 6 }}
+    {{- end }} 

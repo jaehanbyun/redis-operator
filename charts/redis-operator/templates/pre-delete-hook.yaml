@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-rediscluster-pre-delete
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-delete-policy: hook-succeeded
+  labels:
+    {{- include "redisOperator.labels" . | nindent 4 }}
+spec:
+  template:
+    metadata:
+      name: {{ .Release.Name }}-rediscluster-cleanup
+      labels:
+        {{- include "redisOperator.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.redisOperator.name }}-service-account
+      restartPolicy: Never
+      containers:
+      - name: kubectl
+        image: bitnami/kubectl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Deleting RedisCluster resources..."
+          kubectl delete rediscluster -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} --ignore-not-found
+          echo "Waiting for Redis pods to terminate..."
+          # Redis 파드 삭제 확인
+          PODS=$(kubectl get pods -n {{ .Release.Namespace }} -l clusterName={{ .Values.redisCluster.name | default .Release.Name }} -o name 2>/dev/null)
+          if [ ! -z "$PODS" ]; then
+            kubectl delete pods -n {{ .Release.Namespace }} -l clusterName={{ .Values.redisCluster.name | default .Release.Name }} --grace-period=0 --force --ignore-not-found
+          fi
+          echo "Cleanup complete" 
