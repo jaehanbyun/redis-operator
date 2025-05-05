@@ -191,6 +191,11 @@ func UpdatePodLabelWithRedisID(ctx context.Context, k8scl kubernetes.Interface, 
 func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, matchMasterNodeID string) *corev1.Pod {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 
+	image := redisCluster.Spec.Image
+	if redisCluster.Spec.Tag != "" {
+		image = fmt.Sprintf("%s:%s", redisCluster.Spec.Image, redisCluster.Spec.Tag)
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        podName,
@@ -205,8 +210,9 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 			HostNetwork: true, // Enable HostNetwork
 			Containers: []corev1.Container{
 				{
-					Name:  "redis",
-					Image: redisCluster.Spec.Image,
+					Name:            "redis",
+					Image:           image,
+					ImagePullPolicy: redisCluster.Spec.ImagePullPolicy,
 					Ports: []corev1.ContainerPort{
 						{
 							ContainerPort: port,
@@ -224,26 +230,46 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 						"--cluster-port", fmt.Sprintf("%d", port+10000),
 						"--cluster-node-timeout", "5000",
 						"--maxmemory", redisCluster.Spec.Maxmemory,
+						"--protected-mode", "no",
 					},
 					ReadinessProbe: GenerateRedisProbe(port),
 					LivenessProbe:  GenerateRedisProbe(port),
 				},
-				{
-					Name:  "redis-exporter",
-					Image: "oliver006/redis_exporter:latest",
-					Ports: []corev1.ContainerPort{
-						{
-							ContainerPort: port + 5000,
-							Name:          "redis-exporter",
-						},
-					},
-					Args: []string{
-						"--web.listen-address", fmt.Sprintf(":%d", port+5000),
-						"--redis.addr", fmt.Sprintf("localhost:%d", port),
-					},
-				},
 			},
 		},
+	}
+
+	// Add exporter container if enabled
+	if redisCluster.Spec.Exporter != nil && redisCluster.Spec.Exporter.Enabled {
+		exporterImage := "oliver006/redis_exporter:latest"
+		if redisCluster.Spec.Exporter.Image != "" {
+			exporterImage = redisCluster.Spec.Exporter.Image
+			if redisCluster.Spec.Exporter.Tag != "" {
+				exporterImage = fmt.Sprintf("%s:%s", redisCluster.Spec.Exporter.Image, redisCluster.Spec.Exporter.Tag)
+			}
+		}
+
+		exporterContainer := corev1.Container{
+			Name:  "redis-exporter",
+			Image: exporterImage,
+			Ports: []corev1.ContainerPort{
+				{
+					ContainerPort: port + 5000,
+					Name:          "redis-exporter",
+				},
+			},
+			Args: []string{
+				"--web.listen-address", fmt.Sprintf(":%d", port+5000),
+				"--redis.addr", fmt.Sprintf("localhost:%d", port),
+			},
+		}
+
+		// Apply RedisExporter resource settings if provided
+		if redisCluster.Spec.Exporter.Resources != nil {
+			exporterContainer.Resources = *redisCluster.Spec.Exporter.Resources
+		}
+
+		pod.Spec.Containers = append(pod.Spec.Containers, exporterContainer)
 	}
 
 	// Apply Redis resource settings if provided
@@ -251,31 +277,58 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 		pod.Spec.Containers[0].Resources = *redisCluster.Spec.Resources
 	}
 
-	// Apply RedisExporter resource settings if provided
-	if redisCluster.Spec.ExporterResources != nil {
-		pod.Spec.Containers[1].Resources = *redisCluster.Spec.ExporterResources
+	// Add imagePullSecrets if specified
+	if len(redisCluster.Spec.ImagePullSecrets) > 0 {
+		pod.Spec.ImagePullSecrets = redisCluster.Spec.ImagePullSecrets
 	}
+
+	// Add securityContext if specified
+	if redisCluster.Spec.SecurityContext != nil {
+		pod.Spec.SecurityContext = redisCluster.Spec.SecurityContext
+	}
+
+	// Add nodeSelector if specified
+	if redisCluster.Spec.NodeSelector != nil {
+		pod.Spec.NodeSelector = redisCluster.Spec.NodeSelector
+	}
+
+	// Add tolerations if specified
+	if len(redisCluster.Spec.Tolerations) > 0 {
+		pod.Spec.Tolerations = redisCluster.Spec.Tolerations
+	}
+
+	// TODO: Implement volume mounts for persistence
+	// Add persistence if enabled
+	// if redisCluster.Spec.Persistence != nil && redisCluster.Spec.Persistence.Enabled {
+	// 	fmt.Println("Persistence is enabled but not yet implemented")
+	// }
 
 	// If matchMasterNodeID is provided, set PodAntiAffinity
 	if matchMasterNodeID != "" {
-		pod.Spec.Affinity = &corev1.Affinity{
-			PodAntiAffinity: &corev1.PodAntiAffinity{
-				RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-					{
-						LabelSelector: &metav1.LabelSelector{
-							MatchExpressions: []metav1.LabelSelectorRequirement{
-								{
-									Key:      "redisNodeID",
-									Operator: metav1.LabelSelectorOpIn,
-									Values:   []string{matchMasterNodeID},
+		if redisCluster.Spec.Affinity != nil {
+			pod.Spec.Affinity = redisCluster.Spec.Affinity
+		} else {
+			pod.Spec.Affinity = &corev1.Affinity{
+				PodAntiAffinity: &corev1.PodAntiAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+						{
+							LabelSelector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{
+									{
+										Key:      "redisNodeID",
+										Operator: metav1.LabelSelectorOpIn,
+										Values:   []string{matchMasterNodeID},
+									},
 								},
 							},
+							TopologyKey: "kubernetes.io/hostname",
 						},
-						TopologyKey: "kubernetes.io/hostname",
 					},
 				},
-			},
+			}
 		}
+	} else if redisCluster.Spec.Affinity != nil {
+		pod.Spec.Affinity = redisCluster.Spec.Affinity
 	}
 
 	return pod

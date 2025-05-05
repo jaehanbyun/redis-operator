@@ -24,15 +24,38 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// ExporterSpec defines the configuration for Redis metrics exporter
+type ExporterSpec struct {
+	Enabled   bool                         `json:"enabled"`
+	Image     string                       `json:"image,omitempty"`
+	Tag       string                       `json:"tag,omitempty"`
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// PersistenceSpec defines the persistence configuration
+type PersistenceSpec struct {
+	Enabled      bool   `json:"enabled"`
+	StorageClass string `json:"storageClass,omitempty"`
+	Size         string `json:"size,omitempty"`
+}
+
 // RedisClusterSpec defines the desired state of RedisCluster
 type RedisClusterSpec struct {
-	Image             string                       `json:"image"`
-	Masters           int32                        `json:"masters"`
-	Replicas          int32                        `json:"replicas"`
-	BasePort          int32                        `json:"basePort"`
-	Maxmemory         string                       `json:"maxMemory"`
-	Resources         *corev1.ResourceRequirements `json:"resources,omitempty"`
-	ExporterResources *corev1.ResourceRequirements `json:"exporterResources,omitempty"`
+	Image            string                        `json:"image"`
+	Tag              string                        `json:"tag,omitempty"`
+	ImagePullPolicy  corev1.PullPolicy             `json:"imagePullPolicy,omitempty"`
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	Masters          int32                         `json:"masters"`
+	Replicas         int32                         `json:"replicas"`
+	BasePort         int32                         `json:"basePort"`
+	Maxmemory        string                        `json:"maxMemory"`
+	Resources        *corev1.ResourceRequirements  `json:"resources,omitempty"`
+	SecurityContext  *corev1.PodSecurityContext    `json:"securityContext,omitempty"`
+	NodeSelector     map[string]string             `json:"nodeSelector,omitempty"`
+	Tolerations      []corev1.Toleration           `json:"tolerations,omitempty"`
+	Affinity         *corev1.Affinity              `json:"affinity,omitempty"`
+	Persistence      *PersistenceSpec              `json:"persistence,omitempty"`
+	Exporter         *ExporterSpec                 `json:"exporter,omitempty"`
 }
 
 // RedisClusterStatus defines the observed state of RedisCluster
