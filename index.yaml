@@ -6,14 +6,14 @@ entries:
       description: Redis Operator with Prometheus metrics and autoscaling support
     apiVersion: v2
     appVersion: 0.1.2
-    created: "2025-05-05T09:51:34.724992579Z"
+    created: "2025-05-05T09:55:21.367296639Z"
     dependencies:
     - condition: grafana.enabled
       name: grafana
       repository: https://grafana.github.io/helm-charts
       version: 6.56.5
     description: A Helm chart for Redis Operator
-    digest: 446e7658689e0d5d4503cfdde949608c7712b8cfa3597285f87fe6ebc72b631e
+    digest: b73e6563284ce38b185ec07e487cb2367d699f90c847b188448f07b423a6d848
     keywords:
     - redis
     - operator
@@ -31,7 +31,7 @@ entries:
     version: 0.1.2
   - apiVersion: v2
     appVersion: 0.1.1
-    created: "2025-05-05T09:51:34.721810271Z"
+    created: "2025-05-05T09:55:21.364226185Z"
     dependencies:
     - condition: prometheus.enabled
       name: prometheus
@@ -56,4 +56,4 @@ entries:
     urls:
     - https://jaehanbyun.github.io/redis-operator/redis-operator-0.1.0.tgz
     version: 0.1.0
-generated: "2025-05-05T09:51:34.710900523Z"
+generated: "2025-05-05T09:55:21.354055798Z"
