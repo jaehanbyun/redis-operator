@@ -56,6 +56,7 @@ type RedisClusterSpec struct {
 	Affinity         *corev1.Affinity              `json:"affinity,omitempty"`
 	Persistence      *PersistenceSpec              `json:"persistence,omitempty"`
 	Exporter         *ExporterSpec                 `json:"exporter,omitempty"`
+	RedisConfig      map[string]string             `json:"redisConfig,omitempty"`
 }
 
 // RedisClusterStatus defines the observed state of RedisCluster

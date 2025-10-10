@@ -1,0 +1,29 @@
+apiVersion: redis.redis/v1beta1
+kind: RedisCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: rediscluster
+    app.kubernetes.io/instance: rediscluster-custom-config
+    app.kubernetes.io/part-of: redis-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: redis-operator
+  name: rediscluster-custom-config
+spec:
+  image: redis
+  tag: "7.0"
+  masters: 3
+  replicas: 1
+  basePort: 10000
+  maxMemory: "512mb"
+  # Custom redis.conf configuration
+  # These key-value pairs will be written to redis.conf
+  # Essential cluster settings (port, cluster-enabled, etc.) are automatically added if not specified
+  redisConfig:
+    maxmemory-policy: "allkeys-lru"
+    timeout: "300"
+    tcp-keepalive: "60"
+    save: "900 1 300 10"
+    appendonly: "yes"
+    appendfsync: "everysec"
+  exporter:
+    enabled: true

@@ -48,6 +48,10 @@ spec:
   affinity:
     {{- toYaml .Values.redisCluster.affinity | nindent 4 }}
   {{- end }}
+  {{- if .Values.redisCluster.redisConfig }}
+  redisConfig:
+    {{- toYaml .Values.redisCluster.redisConfig | nindent 4 }}
+  {{- end }}
   exporter:
     enabled: {{ .Values.redisCluster.exporter.enabled }}
     image: {{ .Values.redisCluster.exporter.image }}:{{ .Values.redisCluster.exporter.tag }}

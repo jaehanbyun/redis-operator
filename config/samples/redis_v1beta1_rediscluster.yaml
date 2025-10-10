@@ -9,4 +9,17 @@ metadata:
     app.kubernetes.io/created-by: redis-operator
   name: rediscluster-sample
 spec:
-  # TODO(user): Add fields here
+  image: redis
+  tag: "7.0"
+  masters: 3
+  replicas: 1
+  basePort: 10000
+  maxMemory: "512mb"
+  # Custom redis.conf configuration (optional)
+  # redisConfig:
+  #   maxmemory-policy: "allkeys-lru"
+  #   timeout: "300"
+  #   tcp-keepalive: "60"
+  #   save: "900 1 300 10"
+  exporter:
+    enabled: true
