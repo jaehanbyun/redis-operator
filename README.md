@@ -65,6 +65,52 @@ spec:
 | maxMemory         | Redis Node의 Max Memory 설정                |
 | resources         | Redis Node Container의 리소스 설정          |
 | exporterResources | Redis Node Exporter Container의 리소스 설정 |
+| redisConfig       | Custom redis.conf 설정 (map[string]string)  |
+
+### Custom Redis Configuration
+
+사용자가 요구하는 redis.conf 설정을 적용하여 Redis Cluster를 구성할 수 있습니다.
+`redisConfig` 필드에 key-value 형태로 설정을 지정하면, 해당 설정이 redis.conf 파일로 생성되어 모든 Redis Node에 적용됩니다.
+
+**기본 설정**
+
+다음 설정들은 클러스터 운영에 필수적이므로 자동으로 추가됩니다 (사용자가 명시하지 않은 경우):
+- `port`: Redis Node의 포트 번호
+- `cluster-enabled`: 클러스터 모드 활성화 (yes)
+- `cluster-port`: 클러스터 버스 포트
+- `cluster-node-timeout`: 클러스터 노드 타임아웃 (5000ms)
+- `maxmemory`: 최대 메모리 설정
+- `protected-mode`: 보호 모드 (no)
+
+**사용 예시**
+
+```yaml
+apiVersion: redis.redis/v1beta1
+kind: RedisCluster
+metadata:
+  name: rediscluster-custom
+spec:
+  image: redis
+  tag: "7.0"
+  masters: 3
+  replicas: 1
+  basePort: 10000
+  maxMemory: "512mb"
+  # Custom redis.conf 설정
+  redisConfig:
+    maxmemory-policy: "allkeys-lru"
+    timeout: "300"
+    tcp-keepalive: "60"
+    save: "900 1 300 10"
+    appendonly: "yes"
+    appendfsync: "everysec"
+  exporter:
+    enabled: true
+```
+
+**주의사항**
+- 클러스터 운영에 필수적인 설정(port, cluster-enabled 등)을 사용자가 지정하는 경우, 사용자가 지정한 값이 우선 적용됩니다.
+- 잘못된 설정은 Redis Node의 시작 실패를 초래할 수 있으므로 주의가 필요합니다.
 
 ### How to Access Redis Node
 
