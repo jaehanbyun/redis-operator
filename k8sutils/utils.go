@@ -65,8 +65,51 @@ func ExtractPortFromPodName(podName string) int32 {
 	return int32(port)
 }
 
+// CreateOrUpdateRedisConfigMap creates or updates the ConfigMap for custom redis configuration
+func CreateOrUpdateRedisConfigMap(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32) error {
+	if len(redisCluster.Spec.RedisConfig) == 0 {
+		return nil // No custom config, skip ConfigMap creation
+	}
+
+	configMap := GenerateRedisConfigMap(redisCluster, port)
+	configMapName := configMap.Name
+
+	// Try to get existing ConfigMap
+	existingConfigMap, err := k8scl.CoreV1().ConfigMaps(redisCluster.Namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new ConfigMap
+			_, err = k8scl.CoreV1().ConfigMaps(redisCluster.Namespace).Create(ctx, configMap, metav1.CreateOptions{})
+			if err != nil {
+				logger.Error(err, "Failed to create ConfigMap", "ConfigMap", configMapName)
+				return err
+			}
+			logger.Info("ConfigMap created successfully", "ConfigMap", configMapName)
+			return nil
+		}
+		logger.Error(err, "Failed to get ConfigMap", "ConfigMap", configMapName)
+		return err
+	}
+
+	// Update existing ConfigMap
+	existingConfigMap.Data = configMap.Data
+	_, err = k8scl.CoreV1().ConfigMaps(redisCluster.Namespace).Update(ctx, existingConfigMap, metav1.UpdateOptions{})
+	if err != nil {
+		logger.Error(err, "Failed to update ConfigMap", "ConfigMap", configMapName)
+		return err
+	}
+	logger.Info("ConfigMap updated successfully", "ConfigMap", configMapName)
+	return nil
+}
+
 // CreateMasterPod creates a Redis master Pod with the given port
 func CreateMasterPod(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32) error {
+	// Create or update ConfigMap if custom redis config is provided
+	if err := CreateOrUpdateRedisConfigMap(ctx, k8scl, redisCluster, logger, port); err != nil {
+		logger.Error(err, "Failed to create or update ConfigMap")
+		return err
+	}
+
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 	masterPod := GenerateRedisPodDef(redisCluster, port, "")
 	_, err := k8scl.CoreV1().Pods(redisCluster.Namespace).Create(ctx, masterPod, metav1.CreateOptions{})
@@ -100,6 +143,12 @@ func CreateMasterPod(ctx context.Context, k8scl kubernetes.Interface, redisClust
 
 // CreateReplicaPod creates a Redis replica Pod attached to the specified master node
 func CreateReplicaPod(ctx context.Context, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32, masterNodeID string) error {
+	// Create or update ConfigMap if custom redis config is provided
+	if err := CreateOrUpdateRedisConfigMap(ctx, k8scl, redisCluster, logger, port); err != nil {
+		logger.Error(err, "Failed to create or update ConfigMap")
+		return err
+	}
+
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
 	replicaPod := GenerateRedisPodDef(redisCluster, port, masterNodeID)
 	_, err := k8scl.CoreV1().Pods(redisCluster.Namespace).Create(ctx, replicaPod, metav1.CreateOptions{})
@@ -187,6 +236,79 @@ func UpdatePodLabelWithRedisID(ctx context.Context, k8scl kubernetes.Interface, 
 	return nil
 }
 
+// GenerateRedisConfigMap creates a ConfigMap for custom redis configuration
+func GenerateRedisConfigMap(redisCluster *redisv1beta1.RedisCluster, port int32) *corev1.ConfigMap {
+	configMapName := fmt.Sprintf("rediscluster-%s-config", redisCluster.Name)
+	
+	// Build redis.conf content from redisConfig map
+	var redisConf strings.Builder
+	
+	// Add essential cluster configuration if not already present
+	hasPort := false
+	hasClusterEnabled := false
+	hasClusterPort := false
+	hasClusterNodeTimeout := false
+	hasMaxMemory := false
+	hasProtectedMode := false
+	
+	for key, value := range redisCluster.Spec.RedisConfig {
+		if key == "port" {
+			hasPort = true
+		}
+		if key == "cluster-enabled" {
+			hasClusterEnabled = true
+		}
+		if key == "cluster-port" {
+			hasClusterPort = true
+		}
+		if key == "cluster-node-timeout" {
+			hasClusterNodeTimeout = true
+		}
+		if key == "maxmemory" {
+			hasMaxMemory = true
+		}
+		if key == "protected-mode" {
+			hasProtectedMode = true
+		}
+		redisConf.WriteString(fmt.Sprintf("%s %s\n", key, value))
+	}
+	
+	// Add required cluster settings if not provided by user
+	if !hasPort {
+		redisConf.WriteString(fmt.Sprintf("port %d\n", port))
+	}
+	if !hasClusterEnabled {
+		redisConf.WriteString("cluster-enabled yes\n")
+	}
+	if !hasClusterPort {
+		redisConf.WriteString(fmt.Sprintf("cluster-port %d\n", port+10000))
+	}
+	if !hasClusterNodeTimeout {
+		redisConf.WriteString("cluster-node-timeout 5000\n")
+	}
+	if !hasMaxMemory {
+		redisConf.WriteString(fmt.Sprintf("maxmemory %s\n", redisCluster.Spec.Maxmemory))
+	}
+	if !hasProtectedMode {
+		redisConf.WriteString("protected-mode no\n")
+	}
+	
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: redisCluster.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(redisCluster, redisv1beta1.GroupVersion.WithKind("RedisCluster")),
+			},
+		},
+		Data: map[string]string{
+			"redis.conf": redisConf.String(),
+		},
+	}
+	
+	return configMap
+}
+
 // GenerateRedisPodDef generates a Pod definition for a Redis instance
 func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, matchMasterNodeID string) *corev1.Pod {
 	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
@@ -194,6 +316,24 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 	image := redisCluster.Spec.Image
 	if redisCluster.Spec.Tag != "" {
 		image = fmt.Sprintf("%s:%s", redisCluster.Spec.Image, redisCluster.Spec.Tag)
+	}
+
+	// Build redis-server command
+	redisCommand := []string{"redis-server"}
+	
+	// If custom redis config is provided, use ConfigMap mount
+	if len(redisCluster.Spec.RedisConfig) > 0 {
+		redisCommand = append(redisCommand, "/redis-config/redis.conf")
+	} else {
+		// Use default command-line arguments
+		redisCommand = append(redisCommand,
+			"--port", fmt.Sprintf("%d", port),
+			"--cluster-enabled", "yes",
+			"--cluster-port", fmt.Sprintf("%d", port+10000),
+			"--cluster-node-timeout", "5000",
+			"--maxmemory", redisCluster.Spec.Maxmemory,
+			"--protected-mode", "no",
+		)
 	}
 
 	pod := &corev1.Pod{
@@ -223,15 +363,7 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 							Name:          "redis-bus",
 						},
 					},
-					Command: []string{
-						"redis-server",
-						"--port", fmt.Sprintf("%d", port),
-						"--cluster-enabled", "yes",
-						"--cluster-port", fmt.Sprintf("%d", port+10000),
-						"--cluster-node-timeout", "5000",
-						"--maxmemory", redisCluster.Spec.Maxmemory,
-						"--protected-mode", "no",
-					},
+					Command:        redisCommand,
 					ReadinessProbe: GenerateRedisProbe(port),
 					LivenessProbe:  GenerateRedisProbe(port),
 				},
@@ -275,6 +407,25 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 	// Apply Redis resource settings if provided
 	if redisCluster.Spec.Resources != nil {
 		pod.Spec.Containers[0].Resources = *redisCluster.Spec.Resources
+	}
+
+	// Add ConfigMap volume and mount if custom redis config is provided
+	if len(redisCluster.Spec.RedisConfig) > 0 {
+		configMapName := fmt.Sprintf("rediscluster-%s-config", redisCluster.Name)
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: "redis-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
+				},
+			},
+		})
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      "redis-config",
+			MountPath: "/redis-config",
+		})
 	}
 
 	// Add imagePullSecrets if specified

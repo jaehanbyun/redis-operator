@@ -83,6 +83,15 @@ redisCluster:
     #   cpu: 100m
     #   memory: 128Mi
   
+  # Custom redis.conf configuration
+  # Each key-value pair will be added to redis.conf
+  # Example:
+  # redisConfig:
+  #   maxmemory-policy: "allkeys-lru"
+  #   timeout: "300"
+  #   tcp-keepalive: "60"
+  redisConfig: {}
+  
   # persistence:
   #   enabled: true
   #   storageClass: ""
